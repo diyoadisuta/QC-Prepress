@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+uploads/
+qc_prepress.db
+*.db-journal
+.DS_Store
+Thumbs.db

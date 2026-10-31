@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Check List Oneup - Division: Design</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            margin: 20px;
+            color: #000;
+        }
+        .container {
+            width: 750px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            font-weight: bold;
+            font-size: 15px;
+            margin-bottom: 15px;
+            line-height: 1.3;
+        }
+        .top-info {
+            width: 100%;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+        .top-info td {
+            padding: 3px 0;
+        }
+        .dotted-input {
+            border: none;
+            border-bottom: 1px dotted #000;
+            outline: none;
+            font-family: inherit;
+            font-size: inherit;
+            background: transparent;
+        }
+        table.checklist-table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1.5px solid #000;
+        }
+        table.checklist-table td {
+            border-bottom: 1px solid #000;
+            padding: 4px 8px;
+            vertical-align: middle;
+        }
+        .preview-box {
+            height: 410px;
+            vertical-align: top !important;
+            padding: 8px !important;
+            border-bottom: 1px solid #000;
+        }
+        .textarea-notes {
+            width: 100%;
+            height: 375px;
+            border: none;
+            resize: none;
+            outline: none;
+            font-family: inherit;
+            font-size: 12px;
+            background: transparent;
+        }
+        .label-col {
+            width: 145px;
+            font-weight: bold;
+            padding-right: 0 !important;
+        }
+        .colon-col {
+            width: 10px;
+            font-weight: bold;
+            padding-left: 2px !important;
+            padding-right: 2px !important;
+        }
+        .checkbox-group {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 15px;
+            font-weight: normal;
+        }
+        .checkbox-group input[type="checkbox"] {
+            width: 15px;
+            height: 15px;
+            margin: 0 5px 0 0;
+            accent-color: #000;
+            cursor: pointer;
+        }
+        .inline-bold {
+            font-weight: bold;
+            margin-left: 15px;
+            margin-right: 5px;
+        }
+        .footer {
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        .signature-container {
+            display: flex;
+            margin-top: 35px;
+            gap: 50px;
+            padding-left: 10px;
+        }
+        .signature-box {
+            text-align: center;
+            font-size: 11px;
+        }
+        .sig-line {
+            margin-bottom: 8px;
+            font-weight: normal;
+        }
+        @media print {
+            body { margin: 0; }
+            .container { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        CHECK LIST ONEUP<br>
+        DIVISION : DESIGN
+    </div>
+
+    <table class="top-info">
+        <tr>
+            <td style="width: 85px; padding-left: 25px;">Customer</td>
+            <td style="width: 15px;">:</td>
+            <td><input type="text" class="dotted-input" style="width: 95%;"></td>
+        </tr>
+        <tr>
+            <td style="padding-left: 25px;">Nama File</td>
+            <td>:</td>
+            <td><input type="text" class="dotted-input" style="width: 95%;"></td>
+        </tr>
+    </table>
+
+    <table class="checklist-table">
+        <!-- Baris 1: PREVIEW (Di Bagian Atas) -->
+        <tr>
+            <td colspan="3" class="preview-box">
+                <div style="font-weight: bold; margin-bottom: 5px;">PREVIEW</div>
+                <textarea class="textarea-notes" placeholder=""></textarea>
+            </td>
+        </tr>
+
+        <!-- Baris 2: Format Warna dlm File -->
+        <tr>
+            <td class="label-col">Format Warna dlm File :</td>
+            <td class="colon-col"></td>
+            <td>
+                <label class="checkbox-group" style="width: 110px;"><input type="checkbox"> RGB</label>
+                <label class="checkbox-group" style="width: 100px;"><input type="checkbox"> CMYK</label>
+                <label class="checkbox-group"><input type="checkbox"> Pantone</label>
+            </td>
+        </tr>
+
+        <!-- Baris 3: Acuan Desain -->
+        <tr>
+            <td class="label-col">Acuan Desain :</td>
+            <td class="colon-col"></td>
+            <td>
+                <label class="checkbox-group"><input type="checkbox"> File Customer</label>
+                <label class="checkbox-group"><input type="checkbox"> Desain Prima</label>
+                <label class="checkbox-group"><input type="checkbox"> Existing/offset Customer</label>
+                <label class="checkbox-group"><input type="checkbox"> File Lama</label>
+            </td>
+        </tr>
+
+        <!-- Baris 4: Format Gambar dlm File -->
+        <tr>
+            <td class="label-col">Format Gambar dlm File :</td>
+            <td class="colon-col"></td>
+            <td>
+                <label class="checkbox-group" style="width: 110px;"><input type="checkbox"> RGB</label>
+                <label class="checkbox-group" style="width: 100px;"><input type="checkbox"> CMYK</label>
+                <label class="checkbox-group"><input type="checkbox"> Pantone</label>
+            </td>
+        </tr>
+
+        <!-- Baris 5: Shadow -->
+        <tr>
+            <td class="label-col">Shadow</td>
+            <td class="colon-col">:</td>
+            <td>
+                <label class="checkbox-group"><input type="checkbox"> Sudah di Expand</label>
+                <label class="checkbox-group"><input type="checkbox"> Belum Di Expand</label>
+                <label class="checkbox-group"><input type="checkbox"> 100% Black</label>
+                <label class="checkbox-group"><input type="checkbox"> 4 Warna</label>
+            </td>
+        </tr>
+
+        <!-- Baris 6: Gradasi -->
+        <tr>
+            <td class="label-col">Gradasi</td>
+            <td class="colon-col">:</td>
+            <td>
+                <label class="checkbox-group" style="width: 165px;"><input type="checkbox"> Sesuai File</label>
+                <label class="checkbox-group"><input type="checkbox"> Perlu dirubah</label>
+            </td>
+        </tr>
+
+        <!-- Baris 7: Transparasi -->
+        <tr>
+            <td class="label-col">Transparasi</td>
+            <td class="colon-col">:</td>
+            <td>
+                <input type="text" class="dotted-input" style="width: 100px;"> <b>%</b>
+            </td>
+        </tr>
+
+        <!-- Baris 8: Acuan Warna -->
+        <tr>
+            <td class="label-col">Acuan Warna</td>
+            <td class="colon-col">:</td>
+            <td>
+                <div style="margin-bottom: 4px;">
+                    <label class="checkbox-group" style="width: 110px;"><input type="checkbox"> Contoh Customer</label>
+                    <label class="checkbox-group" style="width: 100px;"><input type="checkbox"> Standart Mesin</label>
+                    <label class="checkbox-group"><input type="checkbox"> Pantone/TC</label>
+                </div>
+                <div>
+                    <label class="checkbox-group" style="width: 110px;"><input type="checkbox"> Print Digital</label>
+                    <label class="checkbox-group" style="width: 100px;"><input type="checkbox"> Color Range</label>
+                    <label class="checkbox-group"><input type="checkbox"> Cetakan Lama</label>
+                </div>
+            </td>
+        </tr>
+
+        <!-- Baris 9: Bleed/Sisiran -->
+        <tr>
+            <td class="label-col">Bleed/Sisiran</td>
+            <td class="colon-col">:</td>
+            <td>
+                <input type="text" class="dotted-input" style="width: 45px;">mm
+                <span style="margin-left: 8px;">Jarak Konten dgn Potong/ Lipat : <input type="text" class="dotted-input" style="width: 45px;">mm</span>
+                <span class="inline-bold" style="margin-left: 45px;">Cek Typo GPT</span>
+                <label class="checkbox-group"><input type="checkbox" style="margin:0;"></label>
+            </td>
+        </tr>
+
+        <!-- Baris 10: Kualitas Gambar -->
+        <tr>
+            <td class="label-col">Kualitas Gambar</td>
+            <td class="colon-col">:</td>
+            <td>
+                <input type="text" class="dotted-input" style="width: 45px;"> dpi
+                <span style="margin-left: 40px;">Format Gambar &nbsp;: </span>
+                <label class="checkbox-group"><input type="checkbox"> Berupa Link</label>
+                <label class="checkbox-group"><input type="checkbox"> Embedded Link</label>
+            </td>
+        </tr>
+
+        <!-- Baris 11: Outline Gambar/Teks -->
+        <tr>
+            <td class="label-col">Outline Gambar/Teks</td>
+            <td class="colon-col">:</td>
+            <td>
+                <input type="text" class="dotted-input" style="width: 55px;">pt
+                <span style="margin-left: 35px;"></span>
+                <label class="checkbox-group"><input type="checkbox"> Expand Line</label>
+                <label class="checkbox-group"><input type="checkbox"> Edited Line</label>
+            </td>
+        </tr>
+
+        <!-- Baris 12: Komposisi Hitam -->
+        <tr>
+            <td class="label-col">Komposisi Hitam :</td>
+            <td class="colon-col"></td>
+            <td>
+                <label class="checkbox-group" style="width: 85px;"><input type="checkbox"> 4 WARNA</label>
+                <label class="checkbox-group" style="width: 90px;"><input type="checkbox"> 100 % Black</label>
+                <label class="checkbox-group"><input type="checkbox"> 100 % Black + Cyan 30 %</label>
+            </td>
+        </tr>
+
+        <!-- Baris 13: Black Overprint -->
+        <tr>
+            <td class="label-col">Black Overprint :</td>
+            <td class="colon-col"></td>
+            <td>
+                <label class="checkbox-group" style="width: 85px;"><input type="checkbox"> Overprint Fill</label>
+                <label class="checkbox-group"><input type="checkbox"> Overlap Outline (Trapp)</label>
+            </td>
+        </tr>
+
+        <!-- Baris 14: Format Font -->
+        <tr>
+            <td class="label-col">Format Font :</td>
+            <td class="colon-col"></td>
+            <td>
+                <label class="checkbox-group" style="width: 85px;"><input type="checkbox"> Editable</label>
+                <label class="checkbox-group" style="width: 80px;"><input type="checkbox"> Convert</label>
+                <span class="inline-bold">QR / Barcode :</span>
+                <label class="checkbox-group"><input type="checkbox"> Jpeg / Png</label>
+                <label class="checkbox-group"><input type="checkbox"> Vector</label>
+            </td>
+        </tr>
+
+        <!-- Baris 15: Warna Cetak -->
+        <tr>
+            <td class="label-col">Warna Cetak</td>
+            <td class="colon-col">:</td>
+            <td>
+                <input type="text" class="dotted-input" style="width: 130px;">
+                <span style="margin-left: 20px;">Kode Pantone/TC<input type="text" class="dotted-input" style="width: 240px;"></span>
+            </td>
+        </tr>
+    </table>
+
+    <!-- Bagian Footer / Tanda Tangan -->
+    <div class="footer">
+        <div>Telah diperiksa oleh:</div>
+        <div class="signature-container">
+            <div class="signature-box">
+                <div class="sig-line">( ____________________ )</div>
+                <div>DESAINER</div>
+            </div>
+            <div class="signature-box">
+                <div class="sig-line">( ____________________ )</div>
+                <div>REVIEWER</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

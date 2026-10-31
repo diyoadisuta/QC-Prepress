@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PrepressQC Studio — Sistem Pemeriksaan File Artwork &amp; Checklist Otomatis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="cmyk-bar"></div>
+
+  <!-- Full-Screen Login Page (Shown when not authenticated) -->
+  <div class="login-screen" id="loginScreen">
+    <div class="login-card">
+      <div class="login-brand-row">
+        <div class="brand-logo">PrepressQC</div>
+        <span class="badge badge-info">Divisi Prepress &amp; Design</span>
+      </div>
+
+      <h1 class="login-title">Masuk ke PrepressQC Studio</h1>
+      <p class="login-subtitle">
+        Sistem pemeriksaan file artwork, visual comparator, dan digital checklist terdokumentasi.
+      </p>
+
+      <div class="login-error" id="loginErrorBox" style="display:none;"></div>
+
+      <form onsubmit="handleLoginSubmit(event)" class="login-form">
+        <div class="form-group">
+          <label for="loginUsername">Username</label>
+          <input
+            type="text"
+            id="loginUsername"
+            placeholder="Masukkan username (dio, dina, naufal, halim)"
+            autocomplete="username"
+            required
+          />
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input
+            type="password"
+            id="loginPassword"
+            placeholder="Masukkan password"
+            autocomplete="current-password"
+            required
+          />
+        </div>
+        <button type="submit" class="btn btn-primary login-submit-btn">
+          Masuk ke Sistem &rarr;
+        </button>
+      </form>
+
+      <div class="login-accounts-box">
+        <div class="login-accounts-title">Daftar Akun Resmi Divisi Prepress (Klik untuk isi cepat):</div>
+        <div class="login-accounts-grid">
+          <div class="account-chip" onclick="fillLoginQuick('dio', 'dio123')">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong>Dio</strong>
+              <span class="badge badge-auto" style="font-size:10px; padding:1px 7px;">Kepala Prepress</span>
+            </div>
+            <div class="account-cred">User: <code>dio</code> &bull; Pass: <code>dio123</code></div>
+          </div>
+          <div class="account-chip" onclick="fillLoginQuick('dina', 'dina123')">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong>Dina</strong>
+              <span class="badge badge-pass" style="font-size:10px; padding:1px 7px;">QC Prepress</span>
+            </div>
+            <div class="account-cred">User: <code>dina</code> &bull; Pass: <code>dina123</code></div>
+          </div>
+          <div class="account-chip" onclick="fillLoginQuick('naufal', 'naufal123')">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong>Naufal</strong>
+              <span class="badge badge-info" style="font-size:10px; padding:1px 7px;">Operator</span>
+            </div>
+            <div class="account-cred">User: <code>naufal</code> &bull; Pass: <code>naufal123</code></div>
+          </div>
+          <div class="account-chip" onclick="fillLoginQuick('halim', 'halim123')">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <strong>Halim</strong>
+              <span class="badge badge-info" style="font-size:10px; padding:1px 7px;">Operator</span>
+            </div>
+            <div class="account-cred">User: <code>halim</code> &bull; Pass: <code>halim123</code></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Top Navigation Header (Creatio / Nixtio Single-Row Pill Bar) -->
+  <header class="top-header">
+    <div class="brand-group">
+      <div class="brand-logo">PrepressQC</div>
+      <span class="brand-subtitle">Divisi Prepress &amp; Design</span>
+    </div>
+
+    <div class="header-controls">
+      <nav class="top-pill-nav" id="topPillNav">
+        <button class="top-nav-item active" data-tab="inspector" onclick="switchTab('inspector')">Inspeksi File</button>
+        <button class="top-nav-item" data-tab="comparator" onclick="switchTab('comparator')">Perbandingan Visual</button>
+        <button class="top-nav-item" data-tab="checklist" onclick="switchTab('checklist')">Checklist</button>
+        <button class="top-nav-item" data-tab="approval" onclick="switchTab('approval')">Approval</button>
+        <button class="top-nav-item" data-tab="audit" onclick="switchTab('audit')">Riwayat</button>
+      </nav>
+
+      <div class="user-switcher" title="Akun yang sedang login">
+        <span style="font-size:12.5px; font-weight:600; color:var(--navy); padding: 4px 8px;" id="loggedInUserBadge">
+          Dio (Kepala Prepress)
+        </span>
+        <button class="btn btn-sm btn-outline" style="padding:4px 10px; font-size:11.5px;" onclick="handleLogout()">
+          Keluar
+        </button>
+      </div>
+
+      <button class="btn btn-outline" onclick="openTemplateModal()">
+        <span>&#9881; Template</span>
+      </button>
+      <button class="btn btn-primary" onclick="openCreateJobModal()">
+        <span>+ Job Baru</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Hero Greeting + Segmented Progress Pills + Big Thin Numbers (Reference Style) -->
+  <section class="hero-overview">
+    <div class="hero-left">
+      <h1 class="hero-greeting">Selamat datang, <span id="welcomeName">Budi Santoso</span></h1>
+      <div class="hero-pills-row">
+        <div class="hero-pill-col">
+          <span class="hero-pill-label">Tahap File</span>
+          <div class="hero-seg-pill seg-navy" id="heroPillStages">4/4 Stage</div>
+        </div>
+        <div class="hero-pill-col">
+          <span class="hero-pill-label">Auto-Preflight</span>
+          <div class="hero-seg-pill seg-navy-2" id="heroPillAuto">14 Auto</div>
+        </div>
+        <div class="hero-pill-col hero-pill-wide">
+          <span class="hero-pill-label">Progress Checklist Job Aktif</span>
+          <div class="hero-seg-pill seg-blue" id="heroPillChecklist">100% Lulus</div>
+        </div>
+        <div class="hero-pill-col">
+          <span class="hero-pill-label">Status Otorisasi</span>
+          <div class="hero-seg-pill seg-outline" id="heroPillApproval">3/3 ACC</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-metrics">
+      <div class="hero-metric-item">
+        <div class="hero-metric-num" id="kpiTotalJobs">0</div>
+        <div class="hero-metric-label">Total Job</div>
+      </div>
+      <div class="hero-metric-item">
+        <div class="hero-metric-num" id="kpiAutoChecks">0</div>
+        <div class="hero-metric-label">Cek Otomatis</div>
+      </div>
+      <div class="hero-metric-item">
+        <div class="hero-metric-num" id="kpiOpenPins">0</div>
+        <div class="hero-metric-label">Pin Masalah</div>
+      </div>
+      <div class="hero-metric-item">
+        <div class="hero-metric-num" id="kpiRevisionJobs">0</div>
+        <div class="hero-metric-label">Perlu Revisi</div>
+      </div>
+      <div class="hero-metric-item">
+        <div class="hero-metric-num accent-num" id="kpiApprovedJobs">0</div>
+        <div class="hero-metric-label">Siap Cetak</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main Application Grid -->
+  <div class="app-layout">
+    <!-- Left Sidebar: Job Queue -->
+    <aside class="job-sidebar">
+      <div class="sidebar-header">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>Daftar Job</strong>
+          <span id="jobCountBadge" class="badge badge-info">0 Job</span>
+        </div>
+        <input
+          type="text"
+          id="jobSearchInput"
+          class="search-input"
+          placeholder="Cari job, produk, customer..."
+          oninput="renderJobList()"
+        />
+      </div>
+      <div class="job-list" id="jobListContainer"></div>
+    </aside>
+
+    <!-- Right Main Workspace -->
+    <main class="workspace" id="mainWorkspace">
+      <div style="padding: 40px; text-align: center; color: var(--text-muted);">
+        Memuat data Job Prepress...
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal: Create New Job -->
+  <div class="modal-backdrop" id="createJobModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>Buat Job Pemeriksaan Artwork Prepress Baru</span>
+        <button class="btn btn-sm btn-outline" onclick="closeModal('createJobModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nomor Job / SPK *</label>
+            <input type="text" id="njJobNumber" value="JOB-2026-1003" />
+          </div>
+          <div class="form-group">
+            <label>Kode Item Kemasan *</label>
+            <input type="text" id="njItemCode" value="PKG-MATCHA-150G-R01" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nama Produk / Artwork *</label>
+            <input type="text" id="njProductName" value="Folding Box Kyoto Matcha Latte 150g" />
+          </div>
+          <div class="form-group">
+            <label>Nama Customer *</label>
+            <input type="text" id="njCustomerName" value="PT Prima Minuman Nusantara" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Jenis Kemasan / Produk</label>
+            <select id="njPackageType">
+              <option value="Folding Carton / Box">Folding Carton / Box</option>
+              <option value="Flexible Packaging / Sachet">Flexible Packaging / Sachet</option>
+              <option value="Label / Sticker Roll">Label / Sticker Roll</option>
+              <option value="Corrugated Box">Corrugated Box</option>
+              <option value="Commercial Brochure / Leaflet">Commercial Brochure / Leaflet</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Metode Cetak</label>
+            <select id="njPrintMethod">
+              <option value="Offset Lithography 5 Warna + Diecut">Offset Lithography 5 Warna + Diecut</option>
+              <option value="Rotogravure 7 Cylinder">Rotogravure 7 Cylinder</option>
+              <option value="Flexography Narrow Web">Flexography Narrow Web</option>
+              <option value="Digital Offset Press">Digital Offset Press</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Target Lebar Trim (mm)</label>
+            <input type="number" step="0.5" id="njTargetW" value="120" />
+          </div>
+          <div class="form-group">
+            <label>Target Tinggi Trim (mm)</label>
+            <input type="number" step="0.5" id="njTargetH" value="180" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Standar Minimum Bleed (mm)</label>
+            <input type="number" step="0.5" id="njBleed" value="3.0" />
+          </div>
+          <div class="form-group">
+            <label>Standar Resolusi Gambar Min (DPI)</label>
+            <input type="number" step="10" id="njMinDpi" value="300" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Spesifikasi Warna &amp; Spot</label>
+            <input type="text" id="njColorSpec" value="CMYK + PANTONE 185 C + DIELINE_CUT" />
+          </div>
+          <div class="form-group">
+            <label>Target Jumlah Up pada Layout (N-Up)</label>
+            <input type="number" id="njExpectedNup" value="4" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Catatan SPK / Instruksi Khusus Prepress</label>
+          <textarea id="njNotes" rows="2" placeholder="Catatan tambahan untuk operator prepress &amp; QC..."></textarea>
+        </div>
+        <div style="background: var(--bg-card); border: 1px solid var(--border); padding: 12px 14px; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:var(--text-strong);">
+            <input type="checkbox" id="njGenerateDemo" checked />
+            <span>Generate otomatis 4 file sampel PDF (File Asli, AW, OneUp, Layout) untuk simulasi langsung</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12.5px; color:var(--text-secondary); margin-left: 24px;">
+            <input type="checkbox" id="njDemoDefect" />
+            <span>Sertakan contoh masalah prepress pada file AW (Teks bergeser, RGB &amp; Low DPI) untuk uji deteksi otomatis</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('createJobModal')">Batal</button>
+        <button class="btn btn-primary" onclick="submitCreateJob()">Simpan &amp; Buat Job</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Edit Existing Job -->
+  <div class="modal-backdrop" id="editJobModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <span>Edit Spesifikasi Job Prepress</span>
+        <button class="btn btn-sm btn-outline" onclick="closeModal('editJobModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="ejJobId" />
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nomor Job / SPK *</label>
+            <input type="text" id="ejJobNumber" />
+          </div>
+          <div class="form-group">
+            <label>Kode Item Kemasan *</label>
+            <input type="text" id="ejItemCode" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nama Produk / Artwork *</label>
+            <input type="text" id="ejProductName" />
+          </div>
+          <div class="form-group">
+            <label>Nama Customer *</label>
+            <input type="text" id="ejCustomerName" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Jenis Kemasan / Produk</label>
+            <select id="ejPackageType">
+              <option value="Folding Carton / Box">Folding Carton / Box</option>
+              <option value="Flexible Packaging / Sachet">Flexible Packaging / Sachet</option>
+              <option value="Label / Sticker Roll">Label / Sticker Roll</option>
+              <option value="Corrugated Box">Corrugated Box</option>
+              <option value="Commercial Brochure / Leaflet">Commercial Brochure / Leaflet</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Metode Cetak</label>
+            <select id="ejPrintMethod">
+              <option value="Offset Lithography 5 Warna + Diecut">Offset Lithography 5 Warna + Diecut</option>
+              <option value="Rotogravure 7 Cylinder">Rotogravure 7 Cylinder</option>
+              <option value="Flexography Narrow Web">Flexography Narrow Web</option>
+              <option value="Digital Offset Press">Digital Offset Press</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nomor Revisi (R0x)</label>
+            <input type="number" min="1" id="ejRevisionNo" value="1" />
+          </div>
+          <div class="form-group">
+            <label>Target Jumlah Up pada Layout (N-Up)</label>
+            <input type="number" min="1" id="ejExpectedNup" value="4" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Target Lebar Trim (mm)</label>
+            <input type="number" step="0.5" id="ejTargetW" />
+          </div>
+          <div class="form-group">
+            <label>Target Tinggi Trim (mm)</label>
+            <input type="number" step="0.5" id="ejTargetH" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Standar Minimum Bleed (mm)</label>
+            <input type="number" step="0.5" id="ejBleed" />
+          </div>
+          <div class="form-group">
+            <label>Standar Resolusi Gambar Min (DPI)</label>
+            <input type="number" step="10" id="ejMinDpi" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Ukuran Lebar Sheet Layout (mm)</label>
+            <input type="number" step="1" id="ejLayoutW" value="290" />
+          </div>
+          <div class="form-group">
+            <label>Ukuran Tinggi Sheet Layout (mm)</label>
+            <input type="number" step="1" id="ejLayoutH" value="410" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Spesifikasi Warna &amp; Spot</label>
+          <input type="text" id="ejColorSpec" />
+        </div>
+        <div class="form-group">
+          <label>Catatan SPK / Instruksi Khusus Prepress</label>
+          <textarea id="ejNotes" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: space-between;">
+        <button class="btn btn-danger" onclick="deleteJobFromModal()">&#128465; Hapus Job Ini</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-outline" onclick="closeModal('editJobModal')">Batal</button>
+          <button class="btn btn-primary" onclick="submitEditJob()">&#10004; Simpan Perubahan</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add Visual Defect Pin on Canvas -->
+  <div class="modal-backdrop" id="pinModal">
+    <div class="modal-box" style="max-width: 520px;">
+      <div class="modal-header">
+        <span id="pinModalTitle">Tandai Bagian File yang Bermasalah (Visual Pin)</span>
+        <button class="btn btn-sm btn-outline" onclick="closeModal('pinModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex; gap:10px; font-size:12.5px; background:var(--bg-card); padding:10px 14px; border-radius:10px; border:1px solid var(--border);">
+          <div>Tahap File: <strong id="pinStageDisplay" style="color:var(--accent);">AW</strong></div>
+          <div>|</div>
+          <div>Koordinat Lokasi: <strong id="pinCoordDisplay" style="color:var(--warning);">X: 50%, Y: 50%</strong></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Tingkat Keparahan (Severity) *</label>
+            <select id="pinSeverity">
+              <option value="CRITICAL">CRITICAL (Fatal / Tidak Boleh Cetak)</option>
+              <option value="MAJOR" selected>MAJOR (Wajib Revisi Sebelum Cetak)</option>
+              <option value="MINOR">MINOR (Perbaikan Kecil / Toleransi)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Kategori Masalah *</label>
+            <select id="pinCategory">
+              <option value="Teks / Typo">Teks / Salah Ketik / Font</option>
+              <option value="Elemen Bergeser / Berubah">Elemen Bergeser vs File Asli</option>
+              <option value="Warna / Spot / Overprint">Warna RGB / Spot / Overprint</option>
+              <option value="Resolusi / Gambar Pecah">Resolusi Rendah / Gambar Pecah</option>
+              <option value="Bleed / Trim / Garis Pisau">Bleed Kurang / Garis Pisau (Dieline)</option>
+              <option value="Barcode / Eye Mark">Barcode / Eye Mark / Area Lem</option>
+              <option value="Layout / Imposisi">Layout / Jumlah Up / Tanda Cetak</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Judul Singkat Masalah *</label>
+          <input type="text" id="pinTitle" placeholder="Contoh: Teks Netto berubah dari 250g menjadi 200g" />
+        </div>
+        <div class="form-group">
+          <label>Penjelasan Detail &amp; Instruksi Perbaikan *</label>
+          <textarea id="pinComment" rows="3" placeholder="Jelaskan bagian mana yang bermasalah dan bagaimana operator harus memperbaikinya..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Kaitkan dengan Kode Checklist (Opsional)</label>
+          <input type="text" id="pinChecklistCode" placeholder="Contoh: CMP-01, CLR-01, FNT-03" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('pinModal')">Batal</button>
+        <button class="btn btn-danger" onclick="submitNewPin()">Simpan Pin Masalah</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Customize Checklist Template -->
+  <div class="modal-backdrop" id="templateModal">
+    <div class="modal-box" style="max-width: 720px;">
+      <div class="modal-header">
+        <span>Master Standar Item Checklist Prepress</span>
+        <button class="btn btn-sm btn-outline" onclick="closeModal('templateModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px; color:var(--text-secondary);">
+          Daftar item standar ini otomatis diterapkan pada setiap Job baru. Anda juga dapat menambahkan item checklist kustom sesuai kebutuhan divisi.
+        </p>
+        <div id="templateListBox" style="max-height: 260px; overflow-y:auto; border:1px solid var(--border); border-radius:12px; padding:8px; background:var(--bg-input);"></div>
+
+        <div style="border-top:1px solid var(--border); padding-top:12px; margin-top:4px;">
+          <strong style="font-size:13px; color:var(--accent);">+ Tambah Item Standar Checklist Baru</strong>
+          <div class="form-row" style="margin-top:8px;">
+            <div class="form-group">
+              <label>Kode Item (Unik)</label>
+              <input type="text" id="tplCode" placeholder="Mis: PKG-05" />
+            </div>
+            <div class="form-group">
+              <label>Kategori</label>
+              <select id="tplCategory">
+                <option value="1. Dokumen & Dimensi">1. Dokumen &amp; Dimensi</option>
+                <option value="2. Warna & Separasi">2. Warna &amp; Separasi</option>
+                <option value="3. Tipografi & Teks">3. Tipografi &amp; Teks</option>
+                <option value="4. Gambar & Resolusi">4. Gambar &amp; Resolusi</option>
+                <option value="5. Elemen Teknis & Packaging" selected>5. Elemen Teknis &amp; Packaging</option>
+                <option value="6. Perbandingan Antar-Tahap (Visual & Pixel Diff)">6. Perbandingan Antar-Tahap</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:8px;">
+            <div class="form-group">
+              <label>Tahap Target</label>
+              <select id="tplStage">
+                <option value="ORIGINAL">ORIGINAL (File Asli)</option>
+                <option value="AW" selected>AW (Artwork)</option>
+                <option value="ONEUP">ONEUP (1-Up)</option>
+                <option value="LAYOUT">LAYOUT (Imposisi)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Judul Parameter Pemeriksaan</label>
+              <input type="text" id="tplTitle" placeholder="Contoh: Emboss / Deboss Area Clearance" />
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:8px;">
+            <label>Deskripsi Standar Pemeriksaan</label>
+            <input type="text" id="tplDesc" placeholder="Contoh: Jarak aman elemen klise emboss minimal 2 mm dari garis lipat." />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('templateModal')">Tutup</button>
+        <button class="btn btn-primary" onclick="submitNewTemplate()">+ Tambah ke Master Template</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden File Input for Stage Upload -->
+  <input
+    type="file"
+    id="hiddenStageFileInput"
+    style="display:none;"
+    accept=".pdf,.ai,.psd,.cdr,.png,.jpg,.jpeg,.tif,.tiff,.webp,.bmp"
+    onchange="handleStageFileSelected(event)"
+  />
+
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
