@@ -29,11 +29,14 @@ from backend.database import (
 from backend.inspector import evaluate_job_checklist, inspect_artwork_file
 from backend.report_generator import generate_qc_report_pdf
 from backend.sample_generator import generate_stage_pdfs_for_job
+from backend.spk_scanner import scan_spk_file
 
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
+os.makedirs(ASSETS_DIR, exist_ok=True)
 
 app = FastAPI(
     title="QC Prepress Studio - Sistem Pemeriksaan Artwork & Checklist Otomatis",
@@ -66,10 +69,11 @@ class CreateJobRequest(BaseModel):
     layout_width_mm: float = 290.0
     layout_height_mm: float = 410.0
     notes: str = ""
-    created_by: str = "Budi Santoso"
+    created_by: str = "Naufal"
     created_role: str = "Operator Prepress"
     generate_demo_files: bool = False
     demo_has_defect: bool = False
+    checklist_overrides: Optional[Dict[str, Any]] = None
 
 
 class UpdateJobRequest(BaseModel):
@@ -747,6 +751,55 @@ def list_jobs() -> List[Dict[str, Any]]:
     return jobs
 
 
+@app.post("/api/spk/scan")
+async def scan_spk_endpoint(
+    file: UploadFile = File(...),
+    actor_name: str = Form("Naufal"),
+    actor_role: str = Form("Operator Prepress"),
+) -> Dict[str, Any]:
+    spk_dir = os.path.join(UPLOADS_DIR, "spk_scans")
+    os.makedirs(spk_dir, exist_ok=True)
+    ext = os.path.splitext(file.filename or "spk.png")[1].lower() or ".png"
+    safe_name = f"spk_{int(os.times().elapsed * 1000) if hasattr(os.times(), 'elapsed') else 'scan'}{ext}"
+    saved_path = os.path.join(spk_dir, safe_name)
+
+    try:
+        content = await file.read()
+        with open(saved_path, "wb") as f_out:
+            f_out.write(content)
+
+        parsed = scan_spk_file(saved_path)
+        parsed["spk_image_url"] = f"/uploads/spk_scans/{safe_name}"
+
+        conn = get_db()
+        log_audit(
+            conn,
+            None,
+            actor_name,
+            actor_role,
+            "SCAN_SPK",
+            f"Scan Otomatis Kertas SPK ({file.filename}) -> Job: {parsed.get('job_number')} ({parsed.get('product_name')})",
+        )
+        conn.commit()
+        conn.close()
+        return parsed
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Gagal membaca gambar SPK: {e}")
+
+
+@app.post("/api/spk/scan-sample")
+def scan_sample_spk_endpoint(
+    actor_name: str = "Naufal",
+    actor_role: str = "Operator Prepress",
+) -> Dict[str, Any]:
+    sample_path = os.path.join(ASSETS_DIR, "sample_spk_wh_mo_05661.png")
+    if not os.path.exists(sample_path):
+        raise HTTPException(status_code=404, detail="File contoh SPK belum tersedia di folder assets.")
+    parsed = scan_spk_file(sample_path)
+    parsed["spk_image_url"] = "/assets/sample_spk_wh_mo_05661.png"
+    return parsed
+
+
 @app.post("/api/jobs")
 def create_job(req: CreateJobRequest) -> Dict[str, Any]:
     conn = get_db()
@@ -818,6 +871,30 @@ def create_job(req: CreateJobRequest) -> Dict[str, Any]:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             _run_stage_comparison_internal(conn, job_id, "ORIGINAL", "AW", req.created_by, req.created_role)
             _run_stage_comparison_internal(conn, job_id, "ONEUP", "LAYOUT", req.created_by, req.created_role)
+
+        # Initialize the 3 official checklist forms and apply any SPK overrides
+        forms_map = ensure_job_checklist_forms(conn, job_id)
+        if req.checklist_overrides:
+            for ftype in FORM_TYPES:
+                f_obj = forms_map.get(ftype)
+                if f_obj:
+                    merged_data = f_obj["form_data"]
+                    merged_data.update(req.checklist_overrides)
+                    conn.execute(
+                        """
+                        UPDATE job_checklist_forms
+                        SET form_data_json = ?, updated_by = ?, updated_at = ?
+                        WHERE job_id = ? AND form_type = ?
+                        """,
+                        (
+                            json.dumps(merged_data, ensure_ascii=False),
+                            f"{req.created_by} (Auto-Fill SPK)",
+                            now_iso(),
+                            job_id,
+                            ftype,
+                        ),
+                    )
+            conn.commit()
 
         return {"id": job_id, "job_number": req.job_number}
     except Exception as e:
@@ -1638,8 +1715,9 @@ def list_all_audit_logs(limit: int = 100) -> List[Dict[str, Any]]:
     return rows
 
 
-# Mount uploads and static frontend
+# Mount uploads, assets, and static frontend
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 

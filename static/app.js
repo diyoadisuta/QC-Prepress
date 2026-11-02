@@ -2233,16 +2233,225 @@ function renderAuditTab(container) {
 }
 
 /* ============================================================================
- * MODALS: CREATE JOB & CUSTOMIZE TEMPLATES
+ * MODALS: CREATE JOB, SPK CAMERA / SCREENSHOT SCANNER & CUSTOMIZE TEMPLATES
  * ============================================================================ */
+let spkCameraStream = null;
+
+document.addEventListener('paste', async (event) => {
+  const modal = document.getElementById('createJobModal');
+  if (!modal || !modal.classList.contains('open')) return;
+  const items = event.clipboardData?.items || [];
+  for (const item of items) {
+    if (item.type && item.type.startsWith('image/')) {
+      event.preventDefault();
+      const blob = item.getAsFile();
+      if (blob) {
+        await uploadAndScanSpkBlob(blob, 'screenshot_paste_spk.png');
+      }
+      return;
+    }
+  }
+});
+
 function openCreateJobModal() {
   const nextNum = `JOB-2026-${1001 + state.jobs.length}`;
   document.getElementById('njJobNumber').value = nextNum;
+  state.pendingSpkChecklistOverrides = null;
+  const resPanel = document.getElementById('spkScanResultPanel');
+  if (resPanel) {
+    resPanel.style.display = 'none';
+    resPanel.innerHTML = '';
+  }
+  document.querySelectorAll('#createJobModal .spk-autofilled').forEach((el) => {
+    el.classList.remove('spk-autofilled');
+  });
   document.getElementById('createJobModal').classList.add('open');
+}
+
+function closeCreateJobModal() {
+  stopSpkCamera();
+  closeModal('createJobModal');
 }
 
 function closeModal(id) {
   document.getElementById(id).classList.remove('open');
+}
+
+async function toggleSpkCamera() {
+  const camBox = document.getElementById('spkCameraContainer');
+  if (!camBox) return;
+  if (camBox.style.display !== 'none') {
+    stopSpkCamera();
+    return;
+  }
+  try {
+    spkCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    const videoEl = document.getElementById('spkCameraVideo');
+    videoEl.srcObject = spkCameraStream;
+    camBox.style.display = 'block';
+    showToast('Kamera aktif! Arahkan kertas SPK ke kamera lalu klik Ambil Foto.', 'info');
+  } catch (err) {
+    showToast(
+      `Tidak dapat mengakses kamera (${err.message}). Anda tetap dapat menggunakan Paste Screenshot (Ctrl+V) atau Upload Gambar SPK.`,
+      'warn'
+    );
+  }
+}
+
+function stopSpkCamera() {
+  if (spkCameraStream) {
+    spkCameraStream.getTracks().forEach((t) => t.stop());
+    spkCameraStream = null;
+  }
+  const videoEl = document.getElementById('spkCameraVideo');
+  if (videoEl) videoEl.srcObject = null;
+  const camBox = document.getElementById('spkCameraContainer');
+  if (camBox) camBox.style.display = 'none';
+}
+
+async function captureSpkCameraFrame() {
+  const videoEl = document.getElementById('spkCameraVideo');
+  if (!videoEl || !spkCameraStream) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = videoEl.videoWidth || 1280;
+  canvas.height = videoEl.videoHeight || 720;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+  stopSpkCamera();
+
+  canvas.toBlob(async (blob) => {
+    if (blob) {
+      await uploadAndScanSpkBlob(blob, 'camera_capture_spk.png');
+    }
+  }, 'image/png');
+}
+
+async function handleSpkFileSelected(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+  if (!file) return;
+  await uploadAndScanSpkBlob(file, file.name);
+}
+
+async function uploadAndScanSpkBlob(fileOrBlob, filename = 'spk_scan.png') {
+  const resPanel = document.getElementById('spkScanResultPanel');
+  if (resPanel) {
+    resPanel.style.display = 'block';
+    resPanel.innerHTML = `
+      <div style="padding:14px; text-align:center; background:#fff; border-radius:10px; border:1px solid var(--border); color:var(--accent); font-weight:600;">
+        &#8987; Sedang memindai &amp; mengekstrak data Kertas SPK...
+      </div>
+    `;
+  }
+
+  const formData = new FormData();
+  formData.append('file', fileOrBlob, filename);
+  formData.append('actor_name', state.activeUser?.full_name || 'Naufal');
+  formData.append('actor_role', state.activeUser?.role_label || 'Operator Prepress');
+
+  try {
+    const data = await apiFetch('/api/spk/scan', {
+      method: 'POST',
+      body: formData,
+    });
+    applySpkScanResultToForm(data);
+    showToast(
+      `Kertas SPK berhasil dibaca! Seluruh kolom Job &amp; 3 Form Checklist telah diisi otomatis.`,
+      'success'
+    );
+  } catch (err) {
+    if (resPanel) resPanel.style.display = 'none';
+    showToast(`Gagal membaca SPK: ${err.message}`, 'error');
+  }
+}
+
+async function scanSampleSpk() {
+  const resPanel = document.getElementById('spkScanResultPanel');
+  if (resPanel) {
+    resPanel.style.display = 'block';
+    resPanel.innerHTML = `
+      <div style="padding:14px; text-align:center; background:#fff; border-radius:10px; border:1px solid var(--border); color:var(--accent); font-weight:600;">
+        &#8987; Memindai contoh screenshot SPK Production Order (WH/MO/05661)...
+      </div>
+    `;
+  }
+  try {
+    const data = await apiFetch('/api/spk/scan-sample', { method: 'POST' });
+    applySpkScanResultToForm(data);
+    showToast(
+      `Contoh SPK <strong>${data.job_number}</strong> berhasil diekstrak otomatis ke seluruh kolom!`,
+      'success'
+    );
+  } catch (err) {
+    if (resPanel) resPanel.style.display = 'none';
+    showToast(`Gagal memuat contoh SPK: ${err.message}`, 'error');
+  }
+}
+
+function applySpkScanResultToForm(data) {
+  const setAndHighlight = (id, val) => {
+    const el = document.getElementById(id);
+    if (!el || val === undefined || val === null) return;
+    el.value = val;
+    el.classList.add('spk-autofilled');
+  };
+
+  setAndHighlight('njJobNumber', data.job_number);
+  setAndHighlight('njItemCode', data.item_code);
+  setAndHighlight('njProductName', data.product_name);
+  setAndHighlight('njCustomerName', data.customer_name);
+  setAndHighlight('njPackageType', data.package_type);
+  setAndHighlight('njPrintMethod', data.print_method);
+  setAndHighlight('njTargetW', data.target_width_mm);
+  setAndHighlight('njTargetH', data.target_height_mm);
+  setAndHighlight('njLayoutW', data.layout_width_mm);
+  setAndHighlight('njLayoutH', data.layout_height_mm);
+  setAndHighlight('njBleed', data.required_bleed_mm);
+  setAndHighlight('njMinDpi', data.min_dpi);
+  setAndHighlight('njColorSpec', data.color_spec);
+  setAndHighlight('njExpectedNup', data.expected_nup);
+  setAndHighlight('njNotes', data.notes);
+
+  state.pendingSpkChecklistOverrides = data.checklist_overrides || null;
+
+  const meta = data.spk_meta || {};
+  const resPanel = document.getElementById('spkScanResultPanel');
+  if (resPanel) {
+    resPanel.style.display = 'block';
+    resPanel.innerHTML = `
+      <div class="spk-result-card">
+        <div>
+          ${
+            data.spk_image_url
+              ? `<img src="${data.spk_image_url}?t=${Date.now()}" alt="Preview SPK" class="spk-result-thumb" />`
+              : ''
+          }
+        </div>
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px;">
+            <div>
+              <span class="badge badge-pass">&#10004; BERHASIL DIEKSTRAK DARI SPK</span>
+              <strong style="color:var(--text-strong); margin-left:6px;">${data.job_number}</strong>
+            </div>
+            <span style="font-size:11px; color:var(--text-muted);">Otomatis diteruskan ke Checklist Awal, OneUp &amp; Akhir</span>
+          </div>
+          <div class="spk-meta-chips">
+            <div class="spk-meta-item"><strong>Pelanggan:</strong> ${data.customer_name || '-'}</div>
+            <div class="spk-meta-item"><strong>Quantity:</strong> ${meta.quantity || '-'}</div>
+            <div class="spk-meta-item"><strong>Uk. Jadi (cm &rarr; mm):</strong> ${meta.uk_jadi_raw || '-'}</div>
+            <div class="spk-meta-item"><strong>Uk. Potong (cm &rarr; mm):</strong> ${meta.uk_potong_raw || '-'}</div>
+            <div class="spk-meta-item"><strong>Kertas / Plano:</strong> ${meta.kertas_plano || '-'}</div>
+            <div class="spk-meta-item"><strong>Mesin &amp; Cetak:</strong> ${meta.mesin || '-'}</div>
+            <div class="spk-meta-item"><strong>Finishing:</strong> ${meta.finishing || '-'}</div>
+            <div class="spk-meta-item"><strong>Deadline / PPIC:</strong> ${meta.deadline || '-'} (${meta.ppic || '-'})</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
 }
 
 async function submitCreateJob() {
@@ -2255,6 +2464,8 @@ async function submitCreateJob() {
     print_method: document.getElementById('njPrintMethod').value,
     target_width_mm: parseFloat(document.getElementById('njTargetW').value) || 120,
     target_height_mm: parseFloat(document.getElementById('njTargetH').value) || 180,
+    layout_width_mm: parseFloat(document.getElementById('njLayoutW')?.value) || 290,
+    layout_height_mm: parseFloat(document.getElementById('njLayoutH')?.value) || 410,
     required_bleed_mm: parseFloat(document.getElementById('njBleed').value) || 3.0,
     min_dpi: parseInt(document.getElementById('njMinDpi').value, 10) || 300,
     color_spec: document.getElementById('njColorSpec').value.trim(),
@@ -2264,6 +2475,7 @@ async function submitCreateJob() {
     created_role: state.activeUser.role_label,
     generate_demo_files: document.getElementById('njGenerateDemo').checked,
     demo_has_defect: document.getElementById('njDemoDefect').checked,
+    checklist_overrides: state.pendingSpkChecklistOverrides || null,
   };
 
   if (!payload.job_number || !payload.product_name) {
@@ -2272,7 +2484,7 @@ async function submitCreateJob() {
   }
 
   try {
-    closeModal('createJobModal');
+    closeCreateJobModal();
     showToast(`Membuat Job <strong>${payload.job_number}</strong> &amp; menjalankan preflight...`, 'info');
     const created = await apiFetch('/api/jobs', {
       method: 'POST',
@@ -2280,6 +2492,7 @@ async function submitCreateJob() {
       body: JSON.stringify(payload),
     });
     state.selectedJobId = created.id;
+    state.pendingSpkChecklistOverrides = null;
     await refreshAllData(true);
     showToast(`Job <strong>${payload.job_number}</strong> berhasil dibuat!`, 'success');
   } catch (err) {

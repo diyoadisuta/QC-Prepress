@@ -371,3 +371,55 @@ def test_three_official_checklist_forms():
             assert expected_header in pr.text
     finally:
         client.delete(f"/api/jobs/{jid}?actor_name=Dio&actor_role=Kepala+Prepress")
+
+
+def test_spk_scan_and_autofill_job_creation():
+    # 1. Test scanning the sample SPK (WH/MO/05661)
+    scan_resp = client.post("/api/spk/scan-sample")
+    assert scan_resp.status_code == 200
+    spk = scan_resp.json()
+    assert spk["job_number"] == "SPK-15637 (WH/MO/05661)"
+    assert spk["product_name"] == "Stiker 3 Macam Nest Box"
+    assert spk["customer_name"] == "Tommy Leong"
+    assert spk["item_code"] == "SL-LN-ST"
+    assert spk["target_width_mm"] == 228.0
+    assert spk["target_height_mm"] == 195.0
+    assert spk["layout_width_mm"] == 370.0
+    assert spk["layout_height_mm"] == 520.0
+    assert spk["expected_nup"] == 7
+
+    # 2. Create a job using the extracted SPK data & checklist_overrides
+    create_resp = client.post(
+        "/api/jobs",
+        json={
+            "job_number": "SPK-15637-TEST",
+            "product_name": spk["product_name"],
+            "customer_name": spk["customer_name"],
+            "item_code": spk["item_code"],
+            "package_type": spk["package_type"],
+            "print_method": spk["print_method"],
+            "target_width_mm": spk["target_width_mm"],
+            "target_height_mm": spk["target_height_mm"],
+            "layout_width_mm": spk["layout_width_mm"],
+            "layout_height_mm": spk["layout_height_mm"],
+            "expected_nup": spk["expected_nup"],
+            "color_spec": spk["color_spec"],
+            "notes": spk["notes"],
+            "generate_demo_files": False,
+            "checklist_overrides": spk["checklist_overrides"],
+        },
+    )
+    assert create_resp.status_code == 200
+    jid = create_resp.json()["id"]
+
+    try:
+        forms = client.get(f"/api/jobs/{jid}/checklist-forms").json()
+        akhir = forms["AKHIR"]["form_data"]
+        assert akhir["customer"] == "Tommy Leong"
+        assert akhir["uk_potong_kertas_mm"] == "370 x 520"
+        assert akhir["jumlah_up_druk"] == "7"
+        assert akhir["mesin_pm"] is True
+        assert akhir["lam_glossy"] is True
+        assert akhir["acuan_warna_cetakan_lama"] is True
+    finally:
+        client.delete(f"/api/jobs/{jid}?actor_name=Dio&actor_role=Kepala+Prepress")
