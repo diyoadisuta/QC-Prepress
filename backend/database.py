@@ -337,7 +337,7 @@ def _init_schema_on_conn(conn: sqlite3.Connection) -> None:
             customer_name TEXT NOT NULL,
             item_code TEXT NOT NULL,
             package_type TEXT NOT NULL DEFAULT 'Folding Carton / Box',
-            print_method TEXT NOT NULL DEFAULT 'Offset Lithography',
+            print_method TEXT NOT NULL DEFAULT 'Cetak Offset',
             revision_no INTEGER NOT NULL DEFAULT 1,
             target_width_mm REAL NOT NULL DEFAULT 120.0,
             target_height_mm REAL NOT NULL DEFAULT 180.0,

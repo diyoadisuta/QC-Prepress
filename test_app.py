@@ -223,7 +223,7 @@ def test_create_edit_and_delete_job():
             "customer_name": "PT Testing Prepress Updated",
             "item_code": "PKG-TEST-99-R2",
             "package_type": "Flexible Packaging / Sachet",
-            "print_method": "Rotogravure 7 Cylinder",
+            "print_method": "Cetak Digital",
             "revision_no": 2,
             "target_width_mm": 110.0,
             "target_height_mm": 160.0,
@@ -315,10 +315,15 @@ def test_three_official_checklist_forms():
         assert awal_data["customer"] == "PT Prima Kemasan"
         assert awal_data["warna_cmyk"] is True
         assert awal_data["bleed_mm"] == "3"
+        assert "acuan_warna_acc_foto" in awal_data
+        assert "acuan_warna_acc_datang" in awal_data
+        assert "acuan_warna_lainnya" in awal_data
+        assert "acuan_warna_lainnya_text" in awal_data
 
         akhir_data = forms["AKHIR"]["form_data"]
         assert akhir_data["jumlah_up_druk"] == "4"
         assert "120 x 180" in akhir_data["ukuran_dimensi_jadi_mm"]
+        assert "mesin_sm" in akhir_data
 
         # Save manual update on AWAL
         save_resp = client.post(
@@ -369,6 +374,10 @@ def test_three_official_checklist_forms():
             pr = client.get(f"/api/jobs/{jid}/checklist-forms/{ftype}/print")
             assert pr.status_code == 200
             assert expected_header in pr.text
+            assert "ACC Foto" in pr.text
+            assert "ACC Datang" in pr.text
+            if ftype == "AKHIR":
+                assert "SM" in pr.text
     finally:
         client.delete(f"/api/jobs/{jid}?actor_name=Dio&actor_role=Kepala+Prepress")
 

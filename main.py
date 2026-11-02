@@ -58,7 +58,7 @@ class CreateJobRequest(BaseModel):
     customer_name: str
     item_code: str
     package_type: str = "Folding Carton / Box"
-    print_method: str = "Offset Lithography"
+    print_method: str = "Cetak Offset"
     revision_no: int = 1
     target_width_mm: float = 120.0
     target_height_mm: float = 180.0
@@ -82,7 +82,7 @@ class UpdateJobRequest(BaseModel):
     customer_name: str
     item_code: str
     package_type: str = "Folding Carton / Box"
-    print_method: str = "Offset Lithography"
+    print_method: str = "Cetak Offset"
     revision_no: int = 1
     target_width_mm: float = 120.0
     target_height_mm: float = 180.0
@@ -392,7 +392,7 @@ def seed_demo_jobs_if_empty(force_if_zero_jobs: bool = False) -> None:
             "PT Nusantara Aroma Cemerlang",
             "PKG-NR-250G-R02",
             "Folding Carton / Box",
-            "Offset Lithography 5 Warna + Diecut",
+            "Cetak Offset",
             2,
             120.0,
             180.0,
@@ -512,7 +512,7 @@ def seed_demo_jobs_if_empty(force_if_zero_jobs: bool = False) -> None:
             "PT Nusantara Aroma Cemerlang",
             "PKG-NR-GOLD-R03",
             "Folding Carton / Box",
-            "Offset Lithography 5 Warna + Diecut",
+            "Cetak Offset",
             3,
             120.0,
             180.0,
@@ -621,6 +621,8 @@ def _migrate_legacy_actor_names() -> None:
     cur.execute("UPDATE approvals SET approver_nik = 'PRP-002', approver_role_label = 'QC Prepress' WHERE role_stage = 'QC'")
     cur.execute("UPDATE approvals SET approver_nik = 'PRP-004', approver_role_label = 'Operator Prepress' WHERE role_stage = 'OPERATOR' AND approver_name = 'Halim'")
     cur.execute("UPDATE approvals SET approver_nik = 'PRP-003', approver_role_label = 'Operator Prepress' WHERE role_stage = 'OPERATOR' AND approver_name = 'Naufal'")
+    cur.execute("UPDATE jobs SET print_method = 'Cetak Digital' WHERE LOWER(print_method) LIKE '%digital%' AND print_method != 'Cetak Digital'")
+    cur.execute("UPDATE jobs SET print_method = 'Cetak Offset' WHERE print_method NOT IN ('Cetak Offset', 'Cetak Digital')")
     conn.commit()
     conn.close()
 

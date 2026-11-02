@@ -1355,12 +1355,18 @@ function _renderCommonDesignRowsInteractive(d, includeFormatCustomer = true, isA
         <div style="margin-bottom:4px;">
           ${_ofChk(d, 'acuan_warna_contoh_customer', 'Contoh Customer', 'width:115px;')}
           ${_ofChk(d, 'acuan_warna_standart_mesin', 'Standart Mesin', 'width:105px;')}
-          ${_ofChk(d, 'acuan_warna_pantone_tc', 'Pantone/TC')}
+          ${_ofChk(d, 'acuan_warna_pantone_tc', 'Pantone/TC', 'width:95px;')}
+          ${_ofChk(d, 'acuan_warna_acc_foto', 'ACC Foto', 'width:85px;')}
+          ${_ofChk(d, 'acuan_warna_acc_datang', 'ACC Datang')}
         </div>
         <div>
           ${_ofChk(d, 'acuan_warna_print_digital', 'Print Digital', 'width:115px;')}
           ${_ofChk(d, 'acuan_warna_color_range', 'Color Range', 'width:105px;')}
-          ${_ofChk(d, 'acuan_warna_cetakan_lama', 'Cetakan Lama')}
+          ${_ofChk(d, 'acuan_warna_cetakan_lama', 'Cetakan Lama', 'width:95px;')}
+          <label class="of-checkbox-group" style="margin-right:0;">
+            <input type="checkbox" ${d.acuan_warna_lainnya ? 'checked' : ''} onchange="onFormCheckChange('acuan_warna_lainnya', this.checked)">
+            Lainnya ${_ofInput(d, 'acuan_warna_lainnya_text', '115px', 'margin-left:4px;')}
+          </label>
         </div>
       </td>
     </tr>
@@ -1682,6 +1688,7 @@ function renderChecklistTab(container) {
         <td class="of-colon-col"></td>
         <td>
           ${_ofChk(d, 'mesin_pm', 'PM', 'width:50px;')}
+          ${_ofChk(d, 'mesin_sm', 'SM', 'width:50px;')}
           ${_ofChk(d, 'mesin_cd', 'CD', 'width:50px;')}
           ${_ofChk(d, 'mesin_gto', 'GTO', 'width:60px;')}
           ${_ofChk(d, 'mesin_sord', 'SOR-D', 'width:70px;')}
@@ -2517,7 +2524,8 @@ async function openEditJobModal(event, jobId) {
   document.getElementById('ejProductName').value = job.product_name || '';
   document.getElementById('ejCustomerName').value = job.customer_name || '';
   document.getElementById('ejPackageType').value = job.package_type || 'Folding Carton / Box';
-  document.getElementById('ejPrintMethod').value = job.print_method || 'Offset Lithography 5 Warna + Diecut';
+  const rawMethod = (job.print_method || '').toLowerCase();
+  document.getElementById('ejPrintMethod').value = rawMethod.includes('digital') ? 'Cetak Digital' : 'Cetak Offset';
   document.getElementById('ejRevisionNo').value = job.revision_no || 1;
   document.getElementById('ejExpectedNup').value = job.expected_nup || 4;
   document.getElementById('ejTargetW').value = job.target_width_mm || 120;

@@ -210,9 +210,13 @@ def build_autofill_data(conn: sqlite3.Connection, job_id: int, form_type: str) -
         "acuan_warna_contoh_customer": True,
         "acuan_warna_standart_mesin": True,
         "acuan_warna_pantone_tc": has_pantone,
+        "acuan_warna_acc_foto": False,
+        "acuan_warna_acc_datang": False,
         "acuan_warna_print_digital": False,
         "acuan_warna_color_range": False,
         "acuan_warna_cetakan_lama": False,
+        "acuan_warna_lainnya": False,
+        "acuan_warna_lainnya_text": "",
 
         # Row 9: Bleed/Sisiran
         "bleed_mm": _fmt_num(detected_bleed),
@@ -312,6 +316,7 @@ def build_autofill_data(conn: sqlite3.Connection, job_id: int, form_type: str) -
                 "metode_prinnect": True,
 
                 "mesin_pm": False,
+                "mesin_sm": False,
                 "mesin_cd": True,
                 "mesin_gto": False,
                 "mesin_sord": False,
@@ -573,12 +578,15 @@ def _render_common_design_rows_html(d: Dict[str, Any], include_format_customer: 
                 <div style="margin-bottom: 3px;">
                     <label class="checkbox-group" style="width: {w_rgb};"><input type="checkbox" {_chk(d, "acuan_warna_contoh_customer")}> Contoh Customer</label>
                     <label class="checkbox-group" style="width: {w_cmyk};"><input type="checkbox" {_chk(d, "acuan_warna_standart_mesin")}> Standart Mesin</label>
-                    <label class="checkbox-group"><input type="checkbox" {_chk(d, "acuan_warna_pantone_tc")}> Pantone/TC</label>
+                    <label class="checkbox-group" style="width: 85px;"><input type="checkbox" {_chk(d, "acuan_warna_pantone_tc")}> Pantone/TC</label>
+                    <label class="checkbox-group" style="width: 78px;"><input type="checkbox" {_chk(d, "acuan_warna_acc_foto")}> ACC Foto</label>
+                    <label class="checkbox-group" style="margin-right: 0;"><input type="checkbox" {_chk(d, "acuan_warna_acc_datang")}> ACC Datang</label>
                 </div>
                 <div>
                     <label class="checkbox-group" style="width: {w_rgb};"><input type="checkbox" {_chk(d, "acuan_warna_print_digital")}> Print Digital</label>
                     <label class="checkbox-group" style="width: {w_cmyk};"><input type="checkbox" {_chk(d, "acuan_warna_color_range")}> Color Range</label>
-                    <label class="checkbox-group"><input type="checkbox" {_chk(d, "acuan_warna_cetakan_lama")}> Cetakan Lama</label>
+                    <label class="checkbox-group" style="width: 85px;"><input type="checkbox" {_chk(d, "acuan_warna_cetakan_lama")}> Cetakan Lama</label>
+                    <label class="checkbox-group" style="margin-right: 0;"><input type="checkbox" {_chk(d, "acuan_warna_lainnya")}> Lainnya<input type="text" class="dotted-input" style="width: 90px;" value="{_val(d, "acuan_warna_lainnya_text")}"></label>
                 </div>
             </td>
         </tr>
@@ -833,6 +841,7 @@ def render_printable_checklist_html(conn: sqlite3.Connection, job_id: int, form_
             <td class="colon-col"></td>
             <td>
                 <label class="checkbox-group" style="width: 45px;"><input type="checkbox" {_chk(d, "mesin_pm")}> PM</label>
+                <label class="checkbox-group" style="width: 45px;"><input type="checkbox" {_chk(d, "mesin_sm")}> SM</label>
                 <label class="checkbox-group" style="width: 45px;"><input type="checkbox" {_chk(d, "mesin_cd")}> CD</label>
                 <label class="checkbox-group" style="width: 55px;"><input type="checkbox" {_chk(d, "mesin_gto")}> GTO</label>
                 <label class="checkbox-group" style="width: 65px;"><input type="checkbox" {_chk(d, "mesin_sord")}> SOR-D</label>

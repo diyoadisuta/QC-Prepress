@@ -321,9 +321,9 @@ def parse_spk_lines_and_text(ocr_lines: List[Dict[str, Any]], raw_text: str) -> 
     if m_druk_up:
         expected_nup = int(m_druk_up.group(1))
 
-    # 11. Urutan Kerja: Mesin (PM, CD, GTO, SOR-D, SOR-S, TOKO), Sisi/Muka, Warna, Laminating, Plong
+    # 11. Urutan Kerja: Mesin (PM, SM, CD, GTO, SOR-D, SOR-S, TOKO), Sisi/Muka, Warna, Laminating, Plong
     mesin_detected = "PM"
-    for m_code in ("SOR-D", "SOR-S", "GTO", "TOKO", "PM", "CD"):
+    for m_code in ("SOR-D", "SOR-S", "GTO", "TOKO", "PM", "SM", "CD"):
         if re.search(rf"\b{re.escape(m_code)}\b", joined_rows_text):
             mesin_detected = m_code
             break
@@ -406,7 +406,8 @@ def parse_spk_lines_and_text(ocr_lines: List[Dict[str, Any]], raw_text: str) -> 
     target_w_mm, target_h_mm = trim_pair
     layout_w_mm, layout_h_mm = potong_pair
 
-    print_method = "Offset Lithography 5 Warna + Diecut"
+    is_digital_print = bool(re.search(r"Cetak\s*Digital|Print\s*Digital|Indigo|Konica|Xerox", joined_rows_text, re.IGNORECASE))
+    print_method = "Cetak Digital" if is_digital_print else "Cetak Offset"
     color_spec = "4 Warna (CMYK) + Diecut/Plong (1/2 Putus)" if has_4_warna else "CMYK + Spot + Diecut"
 
     notes_parts = []
@@ -440,6 +441,7 @@ def parse_spk_lines_and_text(ocr_lines: List[Dict[str, Any]], raw_text: str) -> 
         "muka_1": is_1_muka,
         "muka_2": is_2_muka,
         "mesin_pm": mesin_detected == "PM",
+        "mesin_sm": mesin_detected == "SM",
         "mesin_cd": mesin_detected == "CD",
         "mesin_gto": mesin_detected == "GTO",
         "mesin_sord": mesin_detected == "SOR-D",
