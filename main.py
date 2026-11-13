@@ -1521,7 +1521,7 @@ def get_file_separation_preview(
         raise HTTPException(status_code=404, detail="File fisik tidak ditemukan di server.")
 
     disp_mode = "black" if mode.strip().lower() == "black" else "ink"
-    plate_slug = hashlib.md5(f"{file_id}:{plate_clean.lower()}:{disp_mode}:v1".encode("utf-8")).hexdigest()[:10]
+    plate_slug = hashlib.md5(f"{file_id}:{plate_clean.lower()}:{disp_mode}:v2".encode("utf-8")).hexdigest()[:10]
     job_dir = os.path.join(UPLOADS_DIR, f"job_{job_id}")
     os.makedirs(job_dir, exist_ok=True)
     sep_filename = f"sep_{file_id}_{plate_slug}.png"

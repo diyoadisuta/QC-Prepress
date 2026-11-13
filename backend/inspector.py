@@ -1061,6 +1061,8 @@ def _cmyk_to_visible_spot_rgb(
         return (24, 24, 27)
     if "WHITE" in p_up or "PUTIH" in p_up:
         return (14, 165, 233)
+    if "GOLD" in p_up or "EMAS" in p_up:
+        return (180, 122, 8)
 
     c, m, y, k = [max(0.0, min(1.0, float(v))) for v in cmyk]
     r = int(round(255.0 * (1.0 - c) * (1.0 - k)))
@@ -1068,9 +1070,9 @@ def _cmyk_to_visible_spot_rgb(
     b = int(round(255.0 * (1.0 - y) * (1.0 - k)))
 
     lum = 0.299 * r + 0.587 * g + 0.114 * b
-    if lum > 220.0:
+    if lum > 200.0:
         if "KUNING" in p_up or "YELLOW" in p_up or "GOLD" in p_up or (y > max(c, m, k) and y > 0.02):
-            return (217, 155, 6)
+            return (196, 136, 6)
         max_ch = max(c, m, y, k)
         if max_ch > 0.01:
             boost = 0.85 / max_ch
@@ -1136,8 +1138,19 @@ def render_pdf_separation_plate(
                 "display_mode": display_mode,
             }
 
-    scale = min(max(150.0 / 72.0, 1.5), 3.0)
+    scale = min(max(216.0 / 72.0, 2.0), 3.2)
     mat = fitz.Matrix(scale, scale)
+
+    zero_sep_obj = (
+        "[ /Separation /ZeroInk /DeviceCMYK << "
+        "/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 0 0 0 0 ] "
+        "/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
+    )
+    full_sep_obj = (
+        "[ /Separation /FullInk /DeviceCMYK << "
+        "/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 1 1 1 1 ] "
+        "/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
+    )
 
     # CASE 1: Process CMYK Plates (Cyan, Magenta, Yellow, Black)
     if plate_up in ("CYAN", "MAGENTA", "YELLOW", "BLACK"):
@@ -1147,24 +1160,34 @@ def render_pdf_separation_plate(
                 s = doc.xref_object(xref, compressed=False)
             except Exception:
                 continue
-            if not s or "/Separation" not in s:
+            if not s:
                 continue
-            m = re.search(r"/Separation\s*/([^\s/\[\]<>()]+)", s)
-            if not m:
-                continue
-            raw_pdf_token = m.group(1)
-            dec_name = _decode_pdf_name(raw_pdf_token)
-            if dec_name.upper() not in ("CYAN", "MAGENTA", "YELLOW", "BLACK", "ALL", "NONE"):
-                # Zero out Spot Colors so they do not bleed into Process CMYK plates
-                zero_obj = (
-                    f"[ /Separation /{raw_pdf_token} /DeviceCMYK << "
-                    f"/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 0 0 0 0 ] "
-                    f"/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
-                )
-                try:
-                    doc.update_object(xref, zero_obj)
-                except Exception:
-                    pass
+            if "/Separation" in s:
+                m = re.search(r"/Separation\s*/([^\s/\[\]<>()]+)", s)
+                if not m:
+                    continue
+                raw_pdf_token = m.group(1)
+                dec_name = _decode_pdf_name(raw_pdf_token)
+                dec_up = dec_name.strip().upper()
+                if dec_up == "ALL":
+                    try:
+                        doc.update_object(xref, full_sep_obj)
+                    except Exception:
+                        pass
+                elif dec_up != plate_up:
+                    # Zero out Spot Colors and other Process Separations using /ZeroInk
+                    # (renaming colorant token is required so MuPDF does not ignore /C1 on process/All names)
+                    try:
+                        doc.update_object(xref, zero_sep_obj)
+                    except Exception:
+                        pass
+            elif "/DeviceN" in s:
+                # Keep /DeviceN only if it targets this process plate (e.g. [/Black] when inspecting BLACK)
+                if not re.search(rf"/\s*{plate_up}\b", s, re.IGNORECASE):
+                    try:
+                        doc.update_object(xref, zero_sep_obj)
+                    except Exception:
+                        pass
 
         pix_cmyk = doc[0].get_pixmap(matrix=mat, colorspace=fitz.csCMYK, alpha=False)
         w, h = pix_cmyk.width, pix_cmyk.height
@@ -1186,49 +1209,51 @@ def render_pdf_separation_plate(
                 s = doc_a.xref_object(xref, compressed=False)
             except Exception:
                 continue
-            if not s or "/Separation" not in s:
+            if not s:
                 continue
-            m = re.search(r"/Separation\s*/([^\s/\[\]<>()]+)", s)
-            if not m:
-                continue
-            raw_pdf_token = m.group(1)
-            dec_name = _decode_pdf_name(raw_pdf_token)
-            if dec_name.upper() in ("ALL", "NONE"):
-                continue
+            if "/Separation" in s:
+                m = re.search(r"/Separation\s*/([^\s/\[\]<>()]+)", s)
+                if not m:
+                    continue
+                raw_pdf_token = m.group(1)
+                dec_name = _decode_pdf_name(raw_pdf_token)
+                dec_up = dec_name.strip().upper()
+                if dec_up == "NONE":
+                    continue
 
-            is_target = dec_name.strip().lower() == plate_clean.lower()
-            if is_target:
-                matched_xrefs += 1
-                # Extract /C1 [ c m y k ] from inline dict or referenced function XRef
-                m_c1 = re.search(r"/C1\s*\[\s*([0-9.\s]+)\]", s)
-                if not m_c1:
-                    m_fn = re.search(r"/DeviceCMYK\s+(\d+)\s+0\s+R", s)
-                    if m_fn:
-                        try:
-                            fn_str = doc_a.xref_object(int(m_fn.group(1)), compressed=False) or ""
-                            m_c1 = re.search(r"/C1\s*\[\s*([0-9.\s]+)\]", fn_str)
-                        except Exception:
-                            pass
-                if m_c1:
-                    vals = [float(x) for x in m_c1.group(1).split() if x.strip()]
-                    if len(vals) == 4:
-                        spot_cmyk = (vals[0], vals[1], vals[2], vals[3])
+                is_exact_spot = dec_name.strip().lower() == plate_clean.lower()
+                # Registration (/Separation /All) prints on every separation plate just like Adobe Acrobat
+                is_target = is_exact_spot or (dec_up == "ALL")
+                if is_exact_spot:
+                    matched_xrefs += 1
+                    # Extract /C1 [ c m y k ] from inline dict or referenced function XRef
+                    m_c1 = re.search(r"/C1\s*\[\s*([0-9.\s]+)\]", s)
+                    if not m_c1:
+                        m_fn = re.search(r"/DeviceCMYK\s+(\d+)\s+0\s+R", s)
+                        if m_fn:
+                            try:
+                                fn_str = doc_a.xref_object(int(m_fn.group(1)), compressed=False) or ""
+                                m_c1 = re.search(r"/C1\s*\[\s*([0-9.\s]+)\]", fn_str)
+                            except Exception:
+                                pass
+                    if m_c1:
+                        vals = [float(x) for x in m_c1.group(1).split() if x.strip()]
+                        if len(vals) == 4:
+                            spot_cmyk = (vals[0], vals[1], vals[2], vals[3])
 
-            zero_obj = (
-                f"[ /Separation /{raw_pdf_token} /DeviceCMYK << "
-                f"/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 0 0 0 0 ] "
-                f"/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
-            )
-            full_obj = (
-                f"[ /Separation /{raw_pdf_token} /DeviceCMYK << "
-                f"/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 1 1 1 1 ] "
-                f"/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
-            )
-            try:
-                doc_a.update_object(xref, zero_obj)
-                doc_b.update_object(xref, full_obj if is_target else zero_obj)
-            except Exception:
-                pass
+                try:
+                    doc_a.update_object(xref, zero_sep_obj)
+                    doc_b.update_object(xref, full_sep_obj if is_target else zero_sep_obj)
+                except Exception:
+                    pass
+            elif "/DeviceN" in s:
+                # Neutralize non-target /DeviceN shadings (such as [/Black] Multiply gradients over Gold)
+                if not re.search(rf"/\s*{re.escape(raw_pdf_token if 'raw_pdf_token' in locals() else plate_clean)}\b", s, re.IGNORECASE):
+                    try:
+                        doc_a.update_object(xref, zero_sep_obj)
+                        doc_b.update_object(xref, zero_sep_obj)
+                    except Exception:
+                        pass
 
         if matched_xrefs > 0:
             pix_a = doc_a[0].get_pixmap(matrix=mat, alpha=False)

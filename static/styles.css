@@ -888,8 +888,8 @@ a {
 
 .canvas-viewport {
   position: relative;
-  height: 600px;
-  overflow: auto;
+  height: 620px;
+  overflow: hidden;
   background-color: #eef2f8;
   background-image:
     linear-gradient(45deg, #e3eaf4 25%, transparent 25%),
@@ -901,7 +901,15 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px;
+  padding: 20px;
+  cursor: grab;
+  touch-action: none;
+}
+.canvas-viewport.is-panning {
+  cursor: grabbing;
+}
+.canvas-viewport.pin-cursor {
+  cursor: crosshair;
 }
 
 .artwork-stage-wrapper {
@@ -909,10 +917,10 @@ a {
   display: inline-block;
   box-shadow: 0 18px 42px rgba(20, 36, 74, 0.2);
   border-radius: 6px;
-  transition: transform 0.15s ease;
   transform-origin: center center;
   user-select: none;
   background: #ffffff;
+  will-change: transform;
 }
 .artwork-stage-wrapper.pin-mode-active {
   cursor: crosshair;
@@ -923,7 +931,8 @@ a {
   display: block;
   max-width: 100%;
   height: auto;
-  max-height: 540px;
+  max-height: 560px;
+  pointer-events: none;
 }
 
 .trim-guide-overlay {

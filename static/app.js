@@ -11,6 +11,8 @@ const state = {
   uploadTargetStage: 'AW',
   activeSubFileId: {}, // { [stage]: fileId }
   canvasZoom: 1.0,
+  canvasPanX: 0,
+  canvasPanY: 0,
   showTrimGuide: true,
   pinModeActive: false,
   highlightedPinId: null,
@@ -592,8 +594,8 @@ function renderInspectorTab(container) {
         : { fileId: activeFile.id, plate: null, mode: 'ink', imageUrl: null, coveragePct: null, hexColor: null, loading: false };
     const isSepActive = Boolean(activeSep.plate && activeSep.imageUrl);
     const canvasImgSrc = isSepActive
-      ? `${activeSep.imageUrl}?t=${Date.now()}`
-      : `${activeFile.preview_path}?t=${Date.now()}`;
+      ? `${activeSep.imageUrl}${activeSep.cacheStamp ? `?t=${activeSep.cacheStamp}` : ''}`
+      : `${activeFile.preview_path}?v=${activeFile.version || 1}`;
 
     const cmykPlates = [
       { name: 'Cyan', color: '#00A8E8' },
@@ -666,9 +668,10 @@ function renderInspectorTab(container) {
               <input type="checkbox" ${state.showTrimGuide ? 'checked' : ''} onchange="toggleTrimGuide(this.checked)" />
               <span>Garis Trim/Bleed</span>
             </label>
-            <button class="btn btn-sm btn-outline" onclick="adjustZoom(-0.2)">&#8722;</button>
-            <button class="btn btn-sm btn-outline" onclick="resetZoom()">${Math.round(state.canvasZoom * 100)}%</button>
-            <button class="btn btn-sm btn-outline" onclick="adjustZoom(0.2)">&#43;</button>
+            <button class="btn btn-sm btn-outline" onclick="adjustZoom(-0.25)" title="Zoom Out">&#8722;</button>
+            <button class="btn btn-sm btn-outline" id="canvasZoomLabel" onclick="resetZoom()" title="Klik untuk Reset Zoom &amp; Posisi (100%)">${Math.round(state.canvasZoom * 100)}%</button>
+            <button class="btn btn-sm btn-outline" onclick="adjustZoom(0.25)" title="Zoom In">&#43;</button>
+            <button class="btn btn-sm btn-outline" onclick="resetZoom()" title="Reset posisi tengah &amp; 100%">Reset</button>
           </div>
         </div>
 
@@ -707,14 +710,21 @@ function renderInspectorTab(container) {
             : ''
         }
 
-        <div class="canvas-viewport">
+        <div
+          class="canvas-viewport ${state.pinModeActive ? 'pin-cursor' : ''}"
+          id="inspectorCanvasViewport"
+          onmousedown="onCanvasMouseDown(event)"
+          onwheel="onCanvasWheel(event)"
+          ondblclick="onCanvasDblClick(event)"
+          title="${state.pinModeActive ? 'Klik pada artwork untuk menaruh Pin' : 'Drag untuk geser preview • Scroll mouse untuk Zoom In/Out • Double-click untuk Reset'}"
+        >
           <div
             class="artwork-stage-wrapper ${state.pinModeActive ? 'pin-mode-active' : ''}"
             id="inspectorArtworkWrapper"
-            style="transform: scale(${state.canvasZoom});"
+            style="transform: translate(${state.canvasPanX}px, ${state.canvasPanY}px) scale(${state.canvasZoom});"
             onclick="onArtworkCanvasClick(event)"
           >
-            <img src="${canvasImgSrc}" alt="Preview ${state.selectedStage}" />
+            <img src="${canvasImgSrc}" alt="Preview ${state.selectedStage}" draggable="false" />
             ${
               state.showTrimGuide && bleedMm > 0
                 ? `<div class="trim-guide-overlay" style="left:${insetLeftPct}%; top:${insetTopPct}%; right:${insetLeftPct}%; bottom:${insetTopPct}%;" title="Garis Potong TrimBox (Bleed ${bleedMm}mm)"></div>`
@@ -917,6 +927,7 @@ async function loadSeparationPlate(fileId, plateName, mode = 'ink') {
       imageUrl: res.image_url,
       coveragePct: res.coverage_pct ?? null,
       hexColor: res.hex_color || '#4f46e5',
+      cacheStamp: Date.now(),
       loading: false,
     };
     renderWorkspace();
@@ -941,6 +952,9 @@ function clearSeparationPlate() {
 function selectStage(stage) {
   state.selectedStage = stage;
   state.pinModeActive = false;
+  state.canvasZoom = 1.0;
+  state.canvasPanX = 0;
+  state.canvasPanY = 0;
   renderWorkspace();
 }
 
@@ -956,6 +970,9 @@ function switchActiveSubFile(stage, fileId) {
   if (!state.activeSubFileId) state.activeSubFileId = {};
   state.activeSubFileId[stage] = parseInt(fileId, 10);
   state.selectedStage = stage;
+  state.canvasZoom = 1.0;
+  state.canvasPanX = 0;
+  state.canvasPanY = 0;
   renderWorkspace();
 }
 
@@ -1023,14 +1040,88 @@ async function handleStageFileSelected(event) {
   }
 }
 
+function applyCanvasTransform() {
+  const wrapper = document.getElementById('inspectorArtworkWrapper');
+  if (wrapper) {
+    wrapper.style.transform = `translate(${state.canvasPanX}px, ${state.canvasPanY}px) scale(${state.canvasZoom})`;
+  }
+  const zoomLabel = document.getElementById('canvasZoomLabel');
+  if (zoomLabel) {
+    zoomLabel.textContent = `${Math.round(state.canvasZoom * 100)}%`;
+  }
+}
+
 function adjustZoom(delta) {
-  state.canvasZoom = Math.min(3.5, Math.max(0.5, +(state.canvasZoom + delta).toFixed(2)));
-  renderWorkspace();
+  state.canvasZoom = Math.min(6.0, Math.max(0.25, +(state.canvasZoom + delta).toFixed(2)));
+  applyCanvasTransform();
 }
 
 function resetZoom() {
   state.canvasZoom = 1.0;
-  renderWorkspace();
+  state.canvasPanX = 0;
+  state.canvasPanY = 0;
+  applyCanvasTransform();
+}
+
+function onCanvasWheel(event) {
+  event.preventDefault();
+  const viewport = document.getElementById('inspectorCanvasViewport');
+  if (!viewport) return;
+
+  const rect = viewport.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const mouseX = event.clientX - cx;
+  const mouseY = event.clientY - cy;
+
+  const oldZoom = state.canvasZoom;
+  const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+  const newZoom = Math.min(6.0, Math.max(0.25, +(oldZoom * factor).toFixed(3)));
+  if (newZoom === oldZoom) return;
+
+  const ratio = newZoom / oldZoom;
+  state.canvasPanX = +(mouseX - (mouseX - state.canvasPanX) * ratio).toFixed(1);
+  state.canvasPanY = +(mouseY - (mouseY - state.canvasPanY) * ratio).toFixed(1);
+  state.canvasZoom = newZoom;
+  applyCanvasTransform();
+}
+
+function onCanvasMouseDown(event) {
+  // Allow panning with left button when NOT in pin mode, OR middle button anytime
+  const isMiddle = event.button === 1;
+  if (event.button !== 0 && !isMiddle) return;
+  if (state.pinModeActive && !isMiddle) return;
+  if (event.target && event.target.closest && event.target.closest('.canvas-pin')) return;
+
+  event.preventDefault();
+  const viewport = document.getElementById('inspectorCanvasViewport');
+  if (viewport) viewport.classList.add('is-panning');
+
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const initPanX = state.canvasPanX;
+  const initPanY = state.canvasPanY;
+
+  const onMove = (moveEvt) => {
+    state.canvasPanX = +(initPanX + (moveEvt.clientX - startX)).toFixed(1);
+    state.canvasPanY = +(initPanY + (moveEvt.clientY - startY)).toFixed(1);
+    applyCanvasTransform();
+  };
+
+  const onUp = () => {
+    if (viewport) viewport.classList.remove('is-panning');
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+  };
+
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+}
+
+function onCanvasDblClick(event) {
+  if (state.pinModeActive) return;
+  if (event.target && event.target.closest && event.target.closest('.canvas-pin')) return;
+  resetZoom();
 }
 
 function toggleTrimGuide(val) {
