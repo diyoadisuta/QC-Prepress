@@ -77,8 +77,8 @@ def build_autofill_data(conn: sqlite3.Connection, job_id: int, form_type: str) -
     layout_file = stage_files.get("LAYOUT")
 
     if form_type == "AWAL":
-        primary_file = aw_file or orig_file or oneup_file or layout_file
-        preview_source = aw_file or orig_file
+        primary_file = orig_file or aw_file or oneup_file or layout_file
+        preview_source = orig_file or aw_file
     elif form_type == "ONEUP":
         primary_file = oneup_file or aw_file or orig_file or layout_file
         preview_source = oneup_file or aw_file
@@ -129,20 +129,48 @@ def build_autofill_data(conn: sqlite3.Connection, job_id: int, form_type: str) -
     has_overprint = bool(insp.get("has_overprint", False) or oneup_insp.get("has_overprint", False))
     has_dieline = bool(oneup_insp.get("has_dieline_spot", False) or insp.get("has_dieline_spot", False))
 
-    # Preview image URL
-    preview_url = ""
-    if preview_source and preview_source.get("preview_path"):
+    # Fetch all job files to support multi-file preview on ONEUP (or any multi-item stage)
+    cur.execute(
+        "SELECT * FROM job_files WHERE job_id = ? ORDER BY version ASC, id ASC",
+        (job_id,),
+    )
+    all_job_files = [dict(r) for r in cur.fetchall()]
+    all_oneup_files = [f for f in all_job_files if f["stage"] == "ONEUP"]
+
+    # Preview image list
+    preview_images: List[Dict[str, Any]] = []
+    if form_type == "ONEUP" and all_oneup_files:
+        for f in all_oneup_files:
+            p_path = f.get("preview_path")
+            if p_path:
+                rel_p = str(p_path).replace("\\", "/")
+                p_url = "/" + rel_p[rel_p.index("uploads/"):] if "uploads/" in rel_p else f"/uploads/{rel_p.lstrip('/')}"
+                preview_images.append({
+                    "url": p_url,
+                    "filename": f.get("filename", ""),
+                    "version": f.get("version", 1),
+                    "id": f.get("id"),
+                })
+    elif preview_source and preview_source.get("preview_path"):
         rel_prev = str(preview_source["preview_path"]).replace("\\", "/")
-        if "uploads/" in rel_prev:
-            preview_url = "/" + rel_prev[rel_prev.index("uploads/"):]
-        else:
-            preview_url = f"/uploads/{rel_prev.lstrip('/')}"
+        p_url = "/" + rel_prev[rel_prev.index("uploads/"):] if "uploads/" in rel_prev else f"/uploads/{rel_prev.lstrip('/')}"
+        preview_images.append({
+            "url": p_url,
+            "filename": preview_source.get("filename", ""),
+            "version": preview_source.get("version", 1),
+            "id": preview_source.get("id"),
+        })
+
+    preview_url = preview_images[0]["url"] if preview_images else ""
 
     # Nama File per form
     if form_type == "AWAL":
-        nama_file = (aw_file or orig_file or {}).get("filename") or f"{job['item_code']} - {job['product_name']}"
+        nama_file = (orig_file or aw_file or {}).get("filename") or f"{job['item_code']} - {job['product_name']}"
     elif form_type == "ONEUP":
-        nama_file = (oneup_file or aw_file or {}).get("filename") or f"{job['item_code']} - {job['product_name']}"
+        if all_oneup_files:
+            nama_file = ", ".join(f["filename"] for f in all_oneup_files)
+        else:
+            nama_file = (oneup_file or aw_file or {}).get("filename") or f"{job['item_code']} - {job['product_name']}"
     else:
         nama_file = (layout_file or oneup_file or aw_file or {}).get("filename") or f"{job['item_code']} - {job['product_name']}"
 
@@ -254,7 +282,8 @@ def build_autofill_data(conn: sqlite3.Connection, job_id: int, form_type: str) -
 
         # Preview & Catatan
         "preview_image_url": preview_url,
-        "show_preview_image": bool(preview_url),
+        "preview_images": preview_images,
+        "show_preview_image": bool(preview_url or preview_images),
         "preview_notes": "",
         "catatan_notes": job.get("notes", "") if form_type == "AWAL" else "",
     }
@@ -463,9 +492,13 @@ def ensure_job_checklist_forms(
         for k, v in auto_data.items():
             if k not in form_data:
                 form_data[k] = v
-        # Keep preview_image_url up-to-date with latest uploaded stage file
+        # Keep preview_image_url, preview_images, and nama_file up-to-date with latest uploaded stage file
         if auto_data.get("preview_image_url"):
             form_data["preview_image_url"] = auto_data["preview_image_url"]
+        if "preview_images" in auto_data:
+            form_data["preview_images"] = auto_data["preview_images"]
+        if auto_data.get("nama_file"):
+            form_data["nama_file"] = auto_data["nama_file"]
 
         row_dict["form_data"] = form_data
         row_dict["meta"] = FORM_META.get(ftype, {})
@@ -678,9 +711,23 @@ def render_printable_checklist_html(conn: sqlite3.Connection, job_id: int, form_
     desainer_sub = f"<div style='font-size:9.5px;color:#333;font-weight:normal;'>{html.escape(desainer_signed_at)}</div>" if desainer_signed_at else ""
     reviewer_sub = f"<div style='font-size:9.5px;color:#333;font-weight:normal;'>{html.escape(reviewer_signed_at)}</div>" if reviewer_signed_at else ""
 
+    preview_list = d.get("preview_images") or []
+    if not preview_list and d.get("preview_image_url"):
+        preview_list = [{"url": d["preview_image_url"], "filename": d.get("nama_file", "")}]
+
     prev_img_html = ""
-    if d.get("preview_image_url") and d.get("show_preview_image", True):
-        prev_img_html = f'<div style="text-align:center;margin:4px 0 8px;"><img src="{html.escape(str(d["preview_image_url"]))}" style="max-height:210px;max-width:95%;object-fit:contain;border:1px solid #ccc;"></div>'
+    if preview_list and d.get("show_preview_image", True):
+        cards_html = []
+        for idx, p in enumerate(preview_list):
+            p_url = html.escape(str(p.get("url") or ""))
+            p_name = html.escape(str(p.get("filename") or f"File #{idx+1}"))
+            cards_html.append(f"""
+            <div style="flex:1; min-width:130px; max-width:240px; text-align:center; background:#fafafa; border:1px solid #ccc; border-radius:4px; padding:6px; margin:4px; box-sizing:border-box;">
+                <div style="font-size:9.5px; font-weight:bold; color:#333; margin-bottom:4px; word-break:break-all;">Item #{idx+1}: {p_name}</div>
+                <img src="{p_url}" style="max-height:190px; max-width:100%; object-fit:contain; border:1px solid #eee; background:#fff;">
+            </div>
+            """)
+        prev_img_html = f'<div style="display:flex; flex-wrap:wrap; justify-content:center; gap:8px; margin:4px 0 8px;">{"".join(cards_html)}</div>'
 
     if ftype == "AWAL":
         body_rows = _render_common_design_rows_html(d, include_format_customer=True, compact=False) + f"""

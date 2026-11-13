@@ -2,7 +2,10 @@ import hashlib
 import json
 import os
 import shutil
+import uuid
 from typing import Any, Dict, List, Optional
+
+import fitz
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +29,11 @@ from backend.database import (
     now_iso,
     populate_job_checklist,
 )
-from backend.inspector import evaluate_job_checklist, inspect_artwork_file
+from backend.inspector import (
+    evaluate_job_checklist,
+    inspect_artwork_file,
+    render_pdf_separation_plate,
+)
 from backend.report_generator import generate_qc_report_pdf
 from backend.sample_generator import generate_stage_pdfs_for_job
 from backend.spk_scanner import scan_spk_file
@@ -193,13 +200,14 @@ def _process_and_register_file(
     job_dir = os.path.join(UPLOADS_DIR, f"job_{job_id}")
     os.makedirs(job_dir, exist_ok=True)
 
+    uid = uuid.uuid4().hex[:6]
     ext = os.path.splitext(original_filename)[1].lower()
-    safe_base = f"{stage}_v{next_version}{ext}"
+    safe_base = f"{stage}_v{next_version}_{uid}{ext}"
     stored_path = os.path.join(job_dir, safe_base)
     if os.path.abspath(src_file_path) != os.path.abspath(stored_path):
         shutil.copy2(src_file_path, stored_path)
 
-    preview_filename = f"preview_{stage}_v{next_version}.png"
+    preview_filename = f"preview_{stage}_v{next_version}_{uid}.png"
     preview_path = os.path.join(job_dir, preview_filename)
 
     inspection = inspect_artwork_file(stored_path, preview_path, job_spec=job)
@@ -594,6 +602,63 @@ def on_startup() -> None:
     init_db()
     seed_demo_jobs_if_empty(force_if_zero_jobs=True)
     _migrate_legacy_actor_names()
+    _refresh_existing_file_inspections()
+
+
+def _refresh_existing_file_inspections() -> None:
+    """Re-inspects existing uploaded PDF/AI files once when inspector logic is upgraded (inspector_v < 4)."""
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM job_files ORDER BY id ASC")
+    rows = cur.fetchall()
+    touched_jobs = set()
+    for r in rows:
+        try:
+            old_insp = json.loads(r["inspection_json"] or "{}")
+        except Exception:
+            old_insp = {}
+        if old_insp.get("inspector_v") == 4:
+            continue
+        rel_stored = (r["stored_path"] or "").lstrip("/").replace("/", os.sep)
+        rel_preview = (r["preview_path"] or "").lstrip("/").replace("/", os.sep)
+        abs_stored = os.path.join(BASE_DIR, rel_stored)
+        abs_preview = os.path.join(BASE_DIR, rel_preview)
+        if not os.path.isfile(abs_stored):
+            continue
+        cur.execute("SELECT * FROM jobs WHERE id = ?", (r["job_id"],))
+        job_row = cur.fetchone()
+        if not job_row:
+            continue
+        job = dict(job_row)
+        try:
+            inspection = inspect_artwork_file(abs_stored, abs_preview, job_spec=job)
+        except Exception:
+            continue
+        stage = r["stage"]
+        auto_status = "PASS"
+        if inspection.get("has_rgb") or not inspection.get("all_fonts_safe"):
+            auto_status = "FAIL"
+        elif inspection.get("min_dpi") and inspection["min_dpi"] < job["min_dpi"]:
+            auto_status = "FAIL" if inspection["min_dpi"] < 220 else "WARN"
+        elif stage == "ONEUP" and inspection.get("detected_bleed_mm", 0) < job["required_bleed_mm"]:
+            auto_status = "WARN"
+
+        cur.execute(
+            "UPDATE job_files SET inspection_json = ?, auto_status = ? WHERE id = ?",
+            (json.dumps(inspection, ensure_ascii=False), auto_status, r["id"]),
+        )
+        touched_jobs.add(int(r["job_id"]))
+
+    if touched_jobs:
+        conn.commit()
+        for jid in sorted(touched_jobs):
+            try:
+                evaluate_job_checklist(conn, jid)
+                ensure_job_checklist_forms(conn, jid, force_refresh_auto=True)
+            except Exception:
+                pass
+        conn.commit()
+    conn.close()
 
 
 def _migrate_legacy_actor_names() -> None:
@@ -762,7 +827,7 @@ async def scan_spk_endpoint(
     spk_dir = os.path.join(UPLOADS_DIR, "spk_scans")
     os.makedirs(spk_dir, exist_ok=True)
     ext = os.path.splitext(file.filename or "spk.png")[1].lower() or ".png"
-    safe_name = f"spk_{int(os.times().elapsed * 1000) if hasattr(os.times(), 'elapsed') else 'scan'}{ext}"
+    safe_name = f"spk_{uuid.uuid4().hex[:8]}{ext}"
     saved_path = os.path.join(spk_dir, safe_name)
 
     try:
@@ -771,7 +836,20 @@ async def scan_spk_endpoint(
             f_out.write(content)
 
         parsed = scan_spk_file(saved_path)
-        parsed["spk_image_url"] = f"/uploads/spk_scans/{safe_name}"
+        if ext == ".pdf":
+            # Render page 0 of PDF to a PNG thumbnail so the UI can preview it cleanly!
+            thumb_name = f"{os.path.splitext(safe_name)[0]}_preview.png"
+            thumb_path = os.path.join(spk_dir, thumb_name)
+            doc = fitz.open(saved_path)
+            if len(doc) > 0:
+                pix = doc[0].get_pixmap(dpi=150)
+                pix.save(thumb_path)
+                parsed["spk_image_url"] = f"/uploads/spk_scans/{thumb_name}"
+            else:
+                parsed["spk_image_url"] = ""
+            doc.close()
+        else:
+            parsed["spk_image_url"] = f"/uploads/spk_scans/{safe_name}"
 
         conn = get_db()
         log_audit(
@@ -791,14 +869,19 @@ async def scan_spk_endpoint(
 
 @app.post("/api/spk/scan-sample")
 def scan_sample_spk_endpoint(
+    sample_type: str = "odoo",
     actor_name: str = "Naufal",
     actor_role: str = "Operator Prepress",
 ) -> Dict[str, Any]:
-    sample_path = os.path.join(ASSETS_DIR, "sample_spk_wh_mo_05661.png")
+    if sample_type.lower() == "manual":
+        sample_filename = "sample_spk_manual_15638.jpg"
+    else:
+        sample_filename = "sample_spk_wh_mo_05661.png"
+    sample_path = os.path.join(ASSETS_DIR, sample_filename)
     if not os.path.exists(sample_path):
         raise HTTPException(status_code=404, detail="File contoh SPK belum tersedia di folder assets.")
     parsed = scan_spk_file(sample_path)
-    parsed["spk_image_url"] = "/assets/sample_spk_wh_mo_05661.png"
+    parsed["spk_image_url"] = f"/assets/{sample_filename}"
     return parsed
 
 
@@ -1042,12 +1125,20 @@ def get_job_detail(job_id: int) -> Dict[str, Any]:
     )
     all_files = []
     stage_latest: Dict[str, Dict[str, Any]] = {}
+    stage_all_files: Dict[str, List[Dict[str, Any]]] = {
+        "ORIGINAL": [],
+        "AW": [],
+        "ONEUP": [],
+        "LAYOUT": [],
+    }
     for r in cur.fetchall():
         d = dict(r)
         d["inspection"] = json.loads(d["inspection_json"])
         all_files.append(d)
         if d["stage"] not in stage_latest:
             stage_latest[d["stage"]] = d
+        if d["stage"] in stage_all_files:
+            stage_all_files[d["stage"]].append(d)
 
     cur.execute("SELECT * FROM checklist_items WHERE job_id = ? ORDER BY id ASC", (job_id,))
     checklist = [dict(r) for r in cur.fetchall()]
@@ -1078,6 +1169,7 @@ def get_job_detail(job_id: int) -> Dict[str, Any]:
     return {
         "job": job,
         "stage_files": stage_latest,
+        "stage_all_files": stage_all_files,
         "file_history": all_files,
         "checklist": checklist,
         "checklist_forms": checklist_forms,
@@ -1260,37 +1352,125 @@ def print_job_checklist_form(job_id: int, form_type: str) -> HTMLResponse:
 async def upload_stage_file(
     job_id: int,
     stage: str = Form(...),
-    uploaded_by: str = Form("Budi Santoso"),
+    uploaded_by: str = Form("Naufal"),
     uploaded_role: str = Form("Operator Prepress"),
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
 ) -> Dict[str, Any]:
     stage_up = stage.strip().upper()
     if stage_up not in ("ORIGINAL", "AW", "ONEUP", "LAYOUT"):
         raise HTTPException(status_code=400, detail="Stage harus salah satu dari: ORIGINAL, AW, ONEUP, LAYOUT")
 
-    conn = get_db()
-    tmp_path = os.path.join(UPLOADS_DIR, f"upload_tmp_{job_id}_{file.filename}")
-    try:
-        with open(tmp_path, "wb") as f_out:
-            content = await file.read()
-            f_out.write(content)
+    to_process: List[UploadFile] = []
+    if files:
+        for f in files:
+            if f and f.filename:
+                to_process.append(f)
+    if file and file.filename and file not in to_process:
+        to_process.append(file)
 
-        res = _process_and_register_file(
-            conn,
-            job_id,
-            stage_up,
-            tmp_path,
-            file.filename or f"{stage_up}.pdf",
-            uploaded_by,
-            uploaded_role,
-        )
-        return res
+    if not to_process:
+        raise HTTPException(status_code=400, detail="Tidak ada file yang diunggah.")
+
+    conn = get_db()
+    results = []
+    try:
+        for f in to_process:
+            unique_name = f"upload_tmp_{job_id}_{uuid.uuid4().hex[:6]}_{f.filename}"
+            tmp_path = os.path.join(UPLOADS_DIR, unique_name)
+            try:
+                with open(tmp_path, "wb") as f_out:
+                    content = await f.read()
+                    f_out.write(content)
+
+                res = _process_and_register_file(
+                    conn,
+                    job_id,
+                    stage_up,
+                    tmp_path,
+                    f.filename or f"{stage_up}.pdf",
+                    uploaded_by,
+                    uploaded_role,
+                )
+                results.append(res)
+            finally:
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+
+        last_res = results[-1] if results else {}
+        return {
+            **last_res,
+            "uploaded_count": len(results),
+            "uploaded_files": results,
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Gagal memproses file: {e}")
     finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
         conn.close()
+
+
+@app.delete("/api/jobs/{job_id}/files/{file_id}")
+@app.post("/api/jobs/{job_id}/files/{file_id}/delete")
+def delete_job_file(
+    job_id: int,
+    file_id: int,
+    actor_name: str = "Naufal",
+    actor_role: str = "Operator Prepress",
+) -> Dict[str, Any]:
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM job_files WHERE id = ? AND job_id = ?", (file_id, job_id))
+    f_row = cur.fetchone()
+    if not f_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="File tidak ditemukan.")
+
+    file_info = dict(f_row)
+    stage = file_info["stage"]
+    filename = file_info["filename"]
+    version = file_info["version"]
+    stored_path = file_info.get("stored_path")
+    preview_path = file_info.get("preview_path")
+
+    # Remove physical files from disk
+    if stored_path:
+        abs_stored = os.path.join(BASE_DIR, stored_path.lstrip("/").replace("/", os.sep))
+        if os.path.exists(abs_stored):
+            try:
+                os.remove(abs_stored)
+            except Exception:
+                pass
+    if preview_path:
+        abs_preview = os.path.join(BASE_DIR, preview_path.lstrip("/").replace("/", os.sep))
+        if os.path.exists(abs_preview):
+            try:
+                os.remove(abs_preview)
+            except Exception:
+                pass
+
+    # Delete row from job_files
+    cur.execute("DELETE FROM job_files WHERE id = ?", (file_id,))
+
+    # Re-evaluate checklist and checklist forms
+    evaluate_job_checklist(conn, job_id)
+    ensure_job_checklist_forms(conn, job_id, force_refresh_auto=True)
+
+    log_audit(
+        conn,
+        job_id,
+        actor_name,
+        actor_role,
+        "DELETE_FILE",
+        f"Menghapus file [{stage} v{version}] '{filename}'",
+        target_stage=stage,
+        details={"file_id": file_id, "stage": stage, "version": version, "filename": filename},
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "deleted", "file_id": file_id, "stage": stage, "filename": filename}
 
 
 @app.post("/api/jobs/{job_id}/compare")
@@ -1309,6 +1489,59 @@ def compare_job_stages(job_id: int, req: CompareStagesRequest) -> Dict[str, Any]
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         conn.close()
+
+
+@app.get("/api/jobs/{job_id}/files/{file_id}/separation")
+def get_file_separation_preview(
+    job_id: int,
+    file_id: int,
+    plate: str,
+    mode: str = "ink",
+) -> Dict[str, Any]:
+    """
+    Renders and returns an isolated Color Separation plate preview (e.g., Spot Color 'Coklat Tua',
+    'Kuning Muda', 'Pisau', 'MERAH', 'WHITE', or Process 'Cyan', 'Magenta', 'Yellow', 'Black')
+    for interactive click-to-preview inspection on the canvas.
+    """
+    plate_clean = (plate or "").strip()
+    if not plate_clean:
+        raise HTTPException(status_code=400, detail="Nama pelat separasi wajib diisi.")
+
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM job_files WHERE id = ? AND job_id = ?", (file_id, job_id))
+    f_row = cur.fetchone()
+    conn.close()
+    if not f_row:
+        raise HTTPException(status_code=404, detail="File tidak ditemukan.")
+
+    stored_path = f_row["stored_path"]
+    abs_stored = os.path.join(BASE_DIR, stored_path.lstrip("/").replace("/", os.sep))
+    if not os.path.exists(abs_stored):
+        raise HTTPException(status_code=404, detail="File fisik tidak ditemukan di server.")
+
+    disp_mode = "black" if mode.strip().lower() == "black" else "ink"
+    plate_slug = hashlib.md5(f"{file_id}:{plate_clean.lower()}:{disp_mode}:v1".encode("utf-8")).hexdigest()[:10]
+    job_dir = os.path.join(UPLOADS_DIR, f"job_{job_id}")
+    os.makedirs(job_dir, exist_ok=True)
+    sep_filename = f"sep_{file_id}_{plate_slug}.png"
+    abs_sep_path = os.path.join(job_dir, sep_filename)
+    rel_sep_url = f"/uploads/job_{job_id}/{sep_filename}"
+
+    try:
+        meta = render_pdf_separation_plate(
+            abs_stored,
+            abs_sep_path,
+            plate_clean,
+            display_mode=disp_mode,
+        )
+        return {
+            **meta,
+            "file_id": file_id,
+            "image_url": rel_sep_url,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Gagal merender separasi warna '{plate_clean}': {e}")
 
 
 @app.put("/api/jobs/{job_id}/checklist/{item_id}")
@@ -1725,4 +1958,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def serve_spa() -> FileResponse:
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(STATIC_DIR, "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )

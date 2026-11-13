@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PrepressQC Studio — Sistem Pemeriksaan File Artwork &amp; Checklist Otomatis</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261113b" />
+  <link rel="shortcut icon" href="../assets/LogoPP.jpg" type="image/x-icon">
 </head>
+
 <body>
   <div class="cmyk-bar"></div>
 
@@ -29,23 +32,13 @@
       <form onsubmit="handleLoginSubmit(event)" class="login-form">
         <div class="form-group">
           <label for="loginUsername">Username</label>
-          <input
-            type="text"
-            id="loginUsername"
-            placeholder="Masukkan username (dio, dina, naufal, halim)"
-            autocomplete="username"
-            required
-          />
+          <input type="text" id="loginUsername" placeholder="Masukkan username (dio, dina, naufal, halim)"
+            autocomplete="username" required />
         </div>
         <div class="form-group">
           <label for="loginPassword">Password</label>
-          <input
-            type="password"
-            id="loginPassword"
-            placeholder="Masukkan password"
-            autocomplete="current-password"
-            required
-          />
+          <input type="password" id="loginPassword" placeholder="Masukkan password" autocomplete="current-password"
+            required />
         </div>
         <button type="submit" class="btn btn-primary login-submit-btn">
           Masuk ke Sistem &rarr;
@@ -98,7 +91,8 @@
     <div class="header-controls">
       <nav class="top-pill-nav" id="topPillNav">
         <button class="top-nav-item active" data-tab="inspector" onclick="switchTab('inspector')">Inspeksi File</button>
-        <button class="top-nav-item" data-tab="comparator" onclick="switchTab('comparator')">Perbandingan Visual</button>
+        <button class="top-nav-item" data-tab="comparator" onclick="switchTab('comparator')">Perbandingan
+          Visual</button>
         <button class="top-nav-item" data-tab="checklist" onclick="switchTab('checklist')">Checklist</button>
         <button class="top-nav-item" data-tab="approval" onclick="switchTab('approval')">Approval</button>
         <button class="top-nav-item" data-tab="audit" onclick="switchTab('audit')">Riwayat</button>
@@ -179,13 +173,8 @@
           <strong>Daftar Job</strong>
           <span id="jobCountBadge" class="badge badge-info">0 Job</span>
         </div>
-        <input
-          type="text"
-          id="jobSearchInput"
-          class="search-input"
-          placeholder="Cari job, produk, customer..."
-          oninput="renderJobList()"
-        />
+        <input type="text" id="jobSearchInput" class="search-input" placeholder="Cari job, produk, customer..."
+          oninput="renderJobList()" />
       </div>
       <div class="job-list" id="jobListContainer"></div>
     </aside>
@@ -212,40 +201,38 @@
             <div>
               <div style="display:flex; align-items:center; gap:8px;">
                 <span class="badge badge-auto" style="font-size:11px;">&#9889; AI / OCR SPK SCANNER</span>
-                <strong style="color:var(--text-strong); font-size:13.5px;">Auto-Fill dari Kamera atau Screenshot Kertas SPK</strong>
+                <strong style="color:var(--text-strong); font-size:13.5px;">Auto-Fill dari Kamera atau Screenshot Kertas
+                  SPK</strong>
               </div>
               <div style="font-size:12px; color:var(--text-secondary); margin-top:3px;">
-                Tekan <kbd>Ctrl</kbd>+<kbd>V</kbd> langsung untuk paste screenshot SPK, buka kamera, atau unggah foto/PDF SPK.
+                Tekan <kbd>Ctrl</kbd>+<kbd>V</kbd> langsung untuk paste screenshot SPK, buka kamera, atau unggah
+                foto/PDF SPK.
               </div>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
               <button type="button" class="btn btn-sm btn-primary" onclick="toggleSpkCamera()">
                 &#128247; Buka Kamera SPK
               </button>
-              <button type="button" class="btn btn-sm btn-outline" onclick="document.getElementById('spkFileInput').click()">
+              <button type="button" class="btn btn-sm btn-outline"
+                onclick="document.getElementById('spkFileInput').click()">
                 &#128194; Upload Gambar / PDF SPK
               </button>
-              <button type="button" class="btn btn-sm btn-success" onclick="scanSampleSpk()">
-                &#129514; Coba Contoh SPK (WH/MO/05661)
+              <button type="button" class="btn btn-sm btn-success" onclick="scanSampleSpk('odoo')">
+                &#129514; Coba SPK Sistem (WH/MO/05661)
               </button>
-              <input
-                type="file"
-                id="spkFileInput"
-                accept="image/*,.pdf"
-                style="display:none;"
-                onchange="handleSpkFileSelected(event)"
-              />
+              <button type="button" class="btn btn-sm btn-success" onclick="scanSampleSpk('manual')">
+                &#128221; Coba SPK Manual (15638)
+              </button>
+              <input type="file" id="spkFileInput" accept="image/*,.pdf" style="display:none;"
+                onchange="handleSpkFileSelected(event)" />
             </div>
           </div>
 
           <!-- Live Camera Viewfinder (Hidden by default) -->
-          <div id="spkCameraContainer" style="display:none; margin-top:12px; background:#0f172a; border-radius:12px; padding:12px; text-align:center;">
-            <video
-              id="spkCameraVideo"
-              autoplay
-              playsinline
-              style="width:100%; max-height:300px; border-radius:8px; object-fit:contain; background:#000;"
-            ></video>
+          <div id="spkCameraContainer"
+            style="display:none; margin-top:12px; background:#0f172a; border-radius:12px; padding:12px; text-align:center;">
+            <video id="spkCameraVideo" autoplay playsinline
+              style="width:100%; max-height:300px; border-radius:8px; object-fit:contain; background:#000;"></video>
             <div style="display:flex; justify-content:center; gap:10px; margin-top:10px;">
               <button type="button" class="btn btn-primary" onclick="captureSpkCameraFrame()">
                 &#128248; Ambil Foto &amp; Baca SPK Sekarang
@@ -343,14 +330,18 @@
           <label>Catatan SPK / Instruksi Khusus Prepress</label>
           <textarea id="njNotes" rows="3" placeholder="Catatan tambahan untuk operator prepress &amp; QC..."></textarea>
         </div>
-        <div style="background: var(--bg-card); border: 1px solid var(--border); padding: 12px 14px; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;">
-          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:var(--text-strong);">
+        <div
+          style="background: var(--bg-card); border: 1px solid var(--border); padding: 12px 14px; border-radius: 12px; display: flex; flex-direction: column; gap: 6px;">
+          <label
+            style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600; color:var(--text-strong);">
             <input type="checkbox" id="njGenerateDemo" checked />
             <span>Generate otomatis 4 file sampel PDF (File Asli, AW, OneUp, Layout) untuk simulasi langsung</span>
           </label>
-          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12.5px; color:var(--text-secondary); margin-left: 24px;">
+          <label
+            style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12.5px; color:var(--text-secondary); margin-left: 24px;">
             <input type="checkbox" id="njDemoDefect" />
-            <span>Sertakan contoh masalah prepress pada file AW (Teks bergeser, RGB &amp; Low DPI) untuk uji deteksi otomatis</span>
+            <span>Sertakan contoh masalah prepress pada file AW (Teks bergeser, RGB &amp; Low DPI) untuk uji deteksi
+              otomatis</span>
           </label>
         </div>
       </div>
@@ -476,10 +467,12 @@
         <button class="btn btn-sm btn-outline" onclick="closeModal('pinModal')">&times;</button>
       </div>
       <div class="modal-body">
-        <div style="display:flex; gap:10px; font-size:12.5px; background:var(--bg-card); padding:10px 14px; border-radius:10px; border:1px solid var(--border);">
+        <div
+          style="display:flex; gap:10px; font-size:12.5px; background:var(--bg-card); padding:10px 14px; border-radius:10px; border:1px solid var(--border);">
           <div>Tahap File: <strong id="pinStageDisplay" style="color:var(--accent);">AW</strong></div>
           <div>|</div>
-          <div>Koordinat Lokasi: <strong id="pinCoordDisplay" style="color:var(--warning);">X: 50%, Y: 50%</strong></div>
+          <div>Koordinat Lokasi: <strong id="pinCoordDisplay" style="color:var(--warning);">X: 50%, Y: 50%</strong>
+          </div>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -509,7 +502,8 @@
         </div>
         <div class="form-group">
           <label>Penjelasan Detail &amp; Instruksi Perbaikan *</label>
-          <textarea id="pinComment" rows="3" placeholder="Jelaskan bagian mana yang bermasalah dan bagaimana operator harus memperbaikinya..."></textarea>
+          <textarea id="pinComment" rows="3"
+            placeholder="Jelaskan bagian mana yang bermasalah dan bagaimana operator harus memperbaikinya..."></textarea>
         </div>
         <div class="form-group">
           <label>Kaitkan dengan Kode Checklist (Opsional)</label>
@@ -532,9 +526,12 @@
       </div>
       <div class="modal-body">
         <p style="font-size:13px; color:var(--text-secondary);">
-          Daftar item standar ini otomatis diterapkan pada setiap Job baru. Anda juga dapat menambahkan item checklist kustom sesuai kebutuhan divisi.
+          Daftar item standar ini otomatis diterapkan pada setiap Job baru. Anda juga dapat menambahkan item checklist
+          kustom sesuai kebutuhan divisi.
         </p>
-        <div id="templateListBox" style="max-height: 260px; overflow-y:auto; border:1px solid var(--border); border-radius:12px; padding:8px; background:var(--bg-input);"></div>
+        <div id="templateListBox"
+          style="max-height: 260px; overflow-y:auto; border:1px solid var(--border); border-radius:12px; padding:8px; background:var(--bg-input);">
+        </div>
 
         <div style="border-top:1px solid var(--border); padding-top:12px; margin-top:4px;">
           <strong style="font-size:13px; color:var(--accent);">+ Tambah Item Standar Checklist Baru</strong>
@@ -572,7 +569,8 @@
           </div>
           <div class="form-group" style="margin-top:8px;">
             <label>Deskripsi Standar Pemeriksaan</label>
-            <input type="text" id="tplDesc" placeholder="Contoh: Jarak aman elemen klise emboss minimal 2 mm dari garis lipat." />
+            <input type="text" id="tplDesc"
+              placeholder="Contoh: Jarak aman elemen klise emboss minimal 2 mm dari garis lipat." />
           </div>
         </div>
       </div>
@@ -584,16 +582,12 @@
   </div>
 
   <!-- Hidden File Input for Stage Upload -->
-  <input
-    type="file"
-    id="hiddenStageFileInput"
-    style="display:none;"
-    accept=".pdf,.ai,.psd,.cdr,.png,.jpg,.jpeg,.tif,.tiff,.webp,.bmp"
-    onchange="handleStageFileSelected(event)"
-  />
+  <input type="file" id="hiddenStageFileInput" style="display:none;"
+    accept=".pdf,.ai,.psd,.cdr,.png,.jpg,.jpeg,.tif,.tiff,.webp,.bmp" onchange="handleStageFileSelected(event)" multiple />
 
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261113b"></script>
 </body>
+
 </html>

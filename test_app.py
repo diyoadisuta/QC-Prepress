@@ -432,3 +432,145 @@ def test_spk_scan_and_autofill_job_creation():
         assert akhir["acuan_warna_cetakan_lama"] is True
     finally:
         client.delete(f"/api/jobs/{jid}?actor_name=Dio&actor_role=Kepala+Prepress")
+
+    # 3. Test scanning the Manual SPK (No. Job 15638 - Cover Kalender Dinding 2027 Bhakti Luhur)
+    manual_resp = client.post("/api/spk/scan-sample?sample_type=manual")
+    assert manual_resp.status_code == 200
+    mspk = manual_resp.json()
+    assert mspk["job_number"] == "SPK-15638"
+    assert mspk["product_name"] == "Cover Kalender Dinding 2027 Bhakti Luhur"
+    assert mspk["customer_name"] == "Bhakti Luhur"
+    assert mspk["print_method"] == "Cetak Offset"
+    assert mspk["target_width_mm"] == 295.0
+    assert mspk["target_height_mm"] == 310.0
+    assert mspk["layout_width_mm"] == 500.0
+    assert mspk["layout_height_mm"] == 325.0
+    assert mspk["expected_nup"] == 1
+    m_ov = mspk["checklist_overrides"]
+    assert m_ov["muka_2"] is True
+
+    # 4. Test scanning the Odoo SPK PDF (SPK_PP_WH_MO_05653.pdf) via POST /api/spk/scan
+    test_pdf_path = r"c:\Users\user\Downloads\SPK_PP_WH_MO_05653.pdf"
+    if os.path.exists(test_pdf_path):
+        with open(test_pdf_path, "rb") as f_pdf:
+            pdf_scan_resp = client.post(
+                "/api/spk/scan",
+                data={"actor_name": "Naufal", "actor_role": "Operator Prepress"},
+                files={"file": ("SPK_PP_WH_MO_05653.pdf", f_pdf, "application/pdf")},
+            )
+        assert pdf_scan_resp.status_code == 200
+        pdata = pdf_scan_resp.json()
+        assert pdata["job_number"] == "SPK-15630 (WH/MO/05653)"
+        assert pdata["product_name"] == "Etiket Josse Blueberry Click 20 (Metalize)"
+        assert pdata["customer_name"] == "CV Tiga Sinar (Bpk. Dona)"
+        assert pdata["item_code"] == "SL-LN-ET"
+        assert pdata["target_width_mm"] == 56.0
+        assert pdata["target_height_mm"] == 92.5
+        assert pdata["layout_width_mm"] == 530.0
+        assert pdata["layout_height_mm"] == 740.0
+        assert pdata["expected_nup"] == 14
+        assert pdata["spk_meta"]["deadline"] == "06 Nov 2026"
+        assert pdata["spk_meta"]["marketing"] == "Martinus"
+        assert pdata["spk_meta"]["ppic"] == "hakim"
+        assert pdata["checklist_overrides"]["mesin_sm"] is True
+        assert pdata["checklist_overrides"]["acuan_warna_acc_datang"] is True
+        assert pdata["spk_image_url"].endswith(".png")  # Thumbnail converted from PDF page 0
+    assert m_ov["layout_lain_plat"] is True
+    assert m_ov["mesin_pm"] is True
+    assert m_ov["pisau_rit"] is True
+    assert m_ov["pisau_mata_ayam"] is True
+    assert m_ov["acuan_warna_standart_mesin"] is True
+
+
+def test_multiple_file_upload_and_delete():
+    create_resp = client.post(
+        "/api/jobs",
+        json={
+            "job_number": "JOB-TEST-MULTI-FILE",
+            "product_name": "Box Multi Item",
+            "customer_name": "PT Multi Test",
+            "item_code": "MULTI-01",
+            "generate_demo_files": False,
+        },
+    )
+    assert create_resp.status_code == 200
+    jid = create_resp.json()["id"]
+
+    try:
+        # Create 2 simple dummy image files
+        img1 = Image.new("RGB", (300, 300), (0, 100, 200))
+        b1 = io.BytesIO()
+        img1.save(b1, format="PNG")
+        b1.seek(0)
+
+        img2 = Image.new("RGB", (300, 300), (200, 100, 0))
+        b2 = io.BytesIO()
+        img2.save(b2, format="PNG")
+        b2.seek(0)
+
+        # Upload both files at once to ONEUP stage
+        up_resp = client.post(
+            f"/api/jobs/{jid}/upload",
+            data={"stage": "ONEUP", "uploaded_by": "Naufal", "uploaded_role": "Operator Prepress"},
+            files=[
+                ("files", ("OneUp_Finch.png", b1.getvalue(), "image/png")),
+                ("files", ("OneUp_Parakeet.png", b2.getvalue(), "image/png")),
+            ],
+        )
+        assert up_resp.status_code == 200
+        up_data = up_resp.json()
+        assert up_data["uploaded_count"] == 2
+
+        # Verify job detail returns both files in stage_all_files["ONEUP"]
+        det = client.get(f"/api/jobs/{jid}").json()
+        oneup_files = det["stage_all_files"]["ONEUP"]
+        assert len(oneup_files) == 2
+        f1_id = oneup_files[0]["id"]
+        f2_id = oneup_files[1]["id"]
+
+        # Verify CHECK LIST ONEUP form has both preview images and both filenames
+        forms_resp = client.get(f"/api/jobs/{jid}/checklist-forms")
+        assert forms_resp.status_code == 200
+        forms = forms_resp.json()
+        oneup_form_data = forms["ONEUP"]["form_data"]
+        assert len(oneup_form_data.get("preview_images", [])) == 2
+        assert "OneUp_Finch.png" in oneup_form_data.get("nama_file", "")
+        assert "OneUp_Parakeet.png" in oneup_form_data.get("nama_file", "")
+
+        # Verify HTML print render contains preview cards for all uploaded files
+        print_resp = client.get(f"/api/jobs/{jid}/checklist-forms/ONEUP/print")
+        assert print_resp.status_code == 200
+        assert "OneUp_Finch.png" in print_resp.text
+        assert "OneUp_Parakeet.png" in print_resp.text
+
+        # Verify interactive Separation Plate preview endpoint works
+        sep_resp = client.get(f"/api/jobs/{jid}/files/{f1_id}/separation?plate=Cyan&mode=ink")
+        assert sep_resp.status_code == 200
+        sep_data = sep_resp.json()
+        assert sep_data["plate_name"] == "Cyan"
+        assert sep_data["image_url"].endswith(".png")
+        assert "coverage_pct" in sep_data
+
+        # Delete first file
+        del_resp = client.delete(f"/api/jobs/{jid}/files/{f1_id}?actor_name=Naufal&actor_role=Operator+Prepress")
+        assert del_resp.status_code == 200
+        assert del_resp.json()["status"] == "deleted"
+
+        # Verify only 1 file remains in ONEUP
+        det2 = client.get(f"/api/jobs/{jid}").json()
+        oneup_files_after = det2["stage_all_files"]["ONEUP"]
+        assert len(oneup_files_after) == 1
+        assert oneup_files_after[0]["id"] == f2_id
+        assert det2["stage_files"]["ONEUP"]["id"] == f2_id
+
+        # Delete the remaining file
+        del2_resp = client.delete(f"/api/jobs/{jid}/files/{f2_id}?actor_name=Naufal&actor_role=Operator+Prepress")
+        assert del2_resp.status_code == 200
+
+        # Verify ONEUP has no files and card resets
+        det3 = client.get(f"/api/jobs/{jid}").json()
+        assert len(det3["stage_all_files"]["ONEUP"]) == 0
+        assert "ONEUP" not in det3["stage_files"]
+
+    finally:
+        client.delete(f"/api/jobs/{jid}?actor_name=Dio&actor_role=Kepala+Prepress")

@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import sqlite3
@@ -108,9 +109,27 @@ def inspect_pdf_or_ai(
     has_overprint = False
     has_rgb_vector = False
     has_cmyk_vector = False
+    has_cmyk_blending_group = False
+    smask_xrefs = set()
 
     xref_len = doc.xref_length()
+    # First pass: collect all Soft Mask (/SMask) XRefs so transparency alpha channels
+    # (/ColorSpace /DeviceGray) are never mistaken for Grayscale artwork plates.
     for xref in range(1, xref_len):
+        try:
+            obj_str = doc.xref_object(xref, compressed=False)
+        except Exception:
+            continue
+        if not obj_str:
+            continue
+        for m_sm in re.finditer(r"/SMask\s+(\d+)\s+0\s+R", obj_str):
+            smask_xrefs.add(int(m_sm.group(1)))
+        if "/Transparency" in obj_str and "/DeviceCMYK" in obj_str:
+            has_cmyk_blending_group = True
+
+    for xref in range(1, xref_len):
+        if xref in smask_xrefs:
+            continue
         try:
             obj_str = doc.xref_object(xref, compressed=False)
         except Exception:
@@ -119,9 +138,11 @@ def inspect_pdf_or_ai(
             continue
 
         # Detect Separation Spot Colors: /Separation /Name
+        # Exclude standard CMYK process plates (Cyan, Magenta, Yellow, Black) and registration plates (All, None)
+        # which imposition software (Prinect / Preps) places in sheet margin color bars.
         for m in re.finditer(r"/Separation\s*/([^\s/\[\]<>()]+)", obj_str):
             raw_spot = _decode_pdf_name(m.group(1))
-            if raw_spot not in ("All", "None") and raw_spot not in spot_colors:
+            if raw_spot.upper() not in ("CYAN", "MAGENTA", "YELLOW", "BLACK", "ALL", "NONE") and raw_spot not in spot_colors:
                 spot_colors.append(raw_spot)
 
         # Detect DeviceN colorants: /DeviceN [ /Name1 /Name2 ... ]
@@ -129,16 +150,16 @@ def inspect_pdf_or_ai(
             names = re.findall(r"/([^\s/\[\]<>()]+)", m.group(1))
             for n in names:
                 dec = _decode_pdf_name(n)
-                if dec not in ("Cyan", "Magenta", "Yellow", "Black", "All", "None") and dec not in spot_colors:
+                if dec.upper() not in ("CYAN", "MAGENTA", "YELLOW", "BLACK", "ALL", "NONE") and dec not in spot_colors:
                     spot_colors.append(dec)
 
         if "/DeviceCMYK" in obj_str:
             color_spaces_found.add("CMYK")
             has_cmyk_vector = True
-        # NOTE: /DeviceRGB in arbitrary objects (e.g. transparency groups) is not proof of RGB artwork;
-        # RGB is flagged only from image XObjects and content-stream RGB operators below.
-        if "/DeviceGray" in obj_str:
-            color_spaces_found.add("Grayscale")
+        # NOTE: /DeviceGray in arbitrary XRefs is routinely used by PDF soft masks (/SMask),
+        # luminosity transparency groups, and Separation tint functions. In CMYK prepress
+        # Separations (Acrobat Output Preview), Grayscale maps to the Process Black (K) plate.
+        # Therefore we only flag Grayscale from actual non-SMask Grayscale images when CMYK is absent.
         if re.search(r"/(?:OP|op)\s+true", obj_str) or re.search(r"/OPM\s+1", obj_str):
             has_overprint = True
 
@@ -151,8 +172,9 @@ def inspect_pdf_or_ai(
             color_spaces_found.add("CMYK")
             has_cmyk_vector = True
         if re.search(r"(?:^|\s)\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\s+(?:rg|RG)(?:\s|$)", content_text):
-            color_spaces_found.add("RGB")
-            has_rgb_vector = True
+            if not has_cmyk_blending_group:
+                color_spaces_found.add("RGB")
+                has_rgb_vector = True
         # Check custom metadata markers embedded by Prepress or Illustrator
         for m in re.finditer(r"%PREPRESS_SPOT:([^\r\n]+)", content_text):
             sp_name = m.group(1).strip()
@@ -166,6 +188,7 @@ def inspect_pdf_or_ai(
     # Check PDF metadata keywords for Spot/Overprint hints if present
     meta = doc.metadata or {}
     keywords_str = (meta.get("keywords") or "") + " " + (meta.get("subject") or "")
+    force_rgb_warn = "RGB_WARN:TRUE" in keywords_str
     for m in re.finditer(r"SPOT:([^;]+)", keywords_str):
         for raw_sp in m.group(1).split(","):
             sp = raw_sp.strip()
@@ -183,35 +206,73 @@ def inspect_pdf_or_ai(
     images_detail: List[Dict[str, Any]] = []
     dpi_values: List[float] = []
     has_rgb_image = False
+    has_cmyk_image = False
+    has_gray_image = False
 
-    for idx, img in enumerate(image_infos):
-        w_px = img.get("width", 0)
-        h_px = img.get("height", 0)
+    for img in image_infos:
+        xref_img = int(img.get("xref", 0) or 0)
+        w_px = int(img.get("width", 0) or 0)
+        h_px = int(img.get("height", 0) or 0)
+        # Skip soft-mask alpha channels and tiny inline helper/gradient strips (xref=0 or <24px)
+        # generated internally by Illustrator/PDF shading, which are not placed artwork images.
+        if xref_img in smask_xrefs:
+            continue
+        if xref_img == 0 or min(w_px, h_px) < 24 or (w_px * h_px) < 2500:
+            continue
+
         cs_name = img.get("cs-name", "Unknown")
+        cs_upper = cs_name.upper()
+        # Skip press registration / calibration / slur strips in sheet margins (Separation(...,All))
+        if ",ALL)" in cs_upper or cs_upper.endswith(",ALL") or ("SEPARATION" in cs_upper and "ALL" in cs_upper):
+            continue
+
         bbox = img.get("bbox", (0, 0, 0, 0))
         bbox_w_pt = max(abs(bbox[2] - bbox[0]), 1.0)
         bbox_h_pt = max(abs(bbox[3] - bbox[1]), 1.0)
 
-        dpi_x = round(w_px / (bbox_w_pt / 72.0), 1)
-        dpi_y = round(h_px / (bbox_h_pt / 72.0), 1)
+        # Use the PDF Image Transformation Matrix (CTM) when available so images rotated 90°/270°
+        # or placed at an angle on Layout/Imposition sheets use their true unrotated physical size.
+        tr = img.get("transform")
+        if tr and len(tr) >= 4:
+            tr_w_pt = math.hypot(float(tr[0]), float(tr[1]))
+            tr_h_pt = math.hypot(float(tr[2]), float(tr[3]))
+            eff_w_pt = tr_w_pt if tr_w_pt >= 1.0 else bbox_w_pt
+            eff_h_pt = tr_h_pt if tr_h_pt >= 1.0 else bbox_h_pt
+        else:
+            eff_w_pt, eff_h_pt = bbox_w_pt, bbox_h_pt
+
+        dpi_x = round(w_px / (eff_w_pt / 72.0), 1)
+        dpi_y = round(h_px / (eff_h_pt / 72.0), 1)
         eff_dpi = round(min(dpi_x, dpi_y), 1)
         dpi_values.append(eff_dpi)
 
-        if "RGB" in cs_name.upper():
-            has_rgb_image = True
-            color_spaces_found.add("RGB")
-        elif "CMYK" in cs_name.upper():
+        if "CMYK" in cs_upper:
+            has_cmyk_image = True
             color_spaces_found.add("CMYK")
-        elif "GRAY" in cs_name.upper():
-            color_spaces_found.add("Grayscale")
+        elif "RGB" in cs_upper:
+            # In a CMYK Prepress PDF (with DeviceCMYK Transparency Blending Group or CMYK+Spot plates
+            # and ICCBased color management), Acrobat Output Preview -> Separations blends placed
+            # ICCBased images into DeviceCMYK process plates unless explicitly flagged as uncalibrated RGB defect.
+            is_icc_blended_in_cmyk = (
+                not force_rgb_warn
+                and (has_cmyk_blending_group or has_cmyk_vector or has_cmyk_image or bool(spot_colors))
+                and ("ICCBASED" in cs_upper or has_cmyk_blending_group)
+            )
+            if is_icc_blended_in_cmyk:
+                color_spaces_found.add("CMYK")
+            else:
+                has_rgb_image = True
+                color_spaces_found.add("RGB")
+        elif "GRAY" in cs_upper:
+            has_gray_image = True
 
         images_detail.append(
             {
-                "index": idx + 1,
-                "xref": img.get("xref", 0),
+                "index": len(images_detail) + 1,
+                "xref": xref_img,
                 "width_px": w_px,
                 "height_px": h_px,
-                "colorspace": cs_name,
+                "colorspace": "DeviceCMYK (Blended)" if ("RGB" in cs_upper and not has_rgb_image) else cs_name,
                 "bpc": img.get("bpc", 8),
                 "effective_dpi": eff_dpi,
                 "bbox_mm": [
@@ -222,6 +283,11 @@ def inspect_pdf_or_ai(
                 ],
             }
         )
+
+    # In Prepress Separations, Grayscale only stands as its own color mode when the document
+    # is not already a 4-color Process CMYK document (since Gray maps to the Process Black K plate).
+    if has_gray_image and "CMYK" not in color_spaces_found:
+        color_spaces_found.add("Grayscale")
 
     min_dpi = min(dpi_values) if dpi_values else None
     max_dpi = max(dpi_values) if dpi_values else None
@@ -266,7 +332,8 @@ def inspect_pdf_or_ai(
                     txt = span.get("text", "").strip()
                     if txt:
                         sz = round(float(span.get("size", 0.0)), 2)
-                        if sz > 0:
+                        # Ignore sub-2pt microscopic calibration tick numbers inside imposition color bars
+                        if sz >= 2.0:
                             font_sizes.append(sz)
                         if len(extracted_text_snippets) < 25:
                             extracted_text_snippets.append(txt)
@@ -305,6 +372,7 @@ def inspect_pdf_or_ai(
     orientation = "Landscape" if media_w_mm > media_h_mm else ("Portrait" if media_h_mm > media_w_mm else "Square")
 
     return {
+        "inspector_v": 4,
         "format_family": "PDF / Vector Prepress",
         "page_count": page_count,
         "orientation": orientation,
@@ -970,3 +1038,237 @@ def evaluate_job_checklist(conn: sqlite3.Connection, job_id: int) -> Dict[str, A
 
     conn.commit()
     return {"updated_auto_items": updated_count}
+
+
+def _cmyk_to_visible_spot_rgb(
+    cmyk: Tuple[float, float, float, float],
+    plate_name: str,
+) -> Tuple[int, int, int]:
+    """
+    Converts a PDF Spot Color's CMYK alternate tint (c, m, y, k in 0..1) into a high-visibility
+    RGB display color on white paper. If the original tint is very pale (e.g. 'Kuning Muda' with
+    9.7% yellow intended to sit over dark brown, or 'WHITE' ink), boosts saturation so fine lines
+    and typography are clearly inspectable on a white canvas.
+    """
+    p_up = plate_name.strip().upper()
+    if p_up == "CYAN":
+        return (0, 168, 232)
+    if p_up == "MAGENTA":
+        return (230, 0, 126)
+    if p_up == "YELLOW":
+        return (234, 195, 0)
+    if p_up == "BLACK":
+        return (24, 24, 27)
+    if "WHITE" in p_up or "PUTIH" in p_up:
+        return (14, 165, 233)
+
+    c, m, y, k = [max(0.0, min(1.0, float(v))) for v in cmyk]
+    r = int(round(255.0 * (1.0 - c) * (1.0 - k)))
+    g = int(round(255.0 * (1.0 - m) * (1.0 - k)))
+    b = int(round(255.0 * (1.0 - y) * (1.0 - k)))
+
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    if lum > 220.0:
+        if "KUNING" in p_up or "YELLOW" in p_up or "GOLD" in p_up or (y > max(c, m, k) and y > 0.02):
+            return (217, 155, 6)
+        max_ch = max(c, m, y, k)
+        if max_ch > 0.01:
+            boost = 0.85 / max_ch
+            c, m, y, k = min(1.0, c * boost), min(1.0, m * boost), min(1.0, y * boost), min(1.0, k * boost)
+            r = int(round(255.0 * (1.0 - c) * (1.0 - k)))
+            g = int(round(255.0 * (1.0 - m) * (1.0 - k)))
+            b = int(round(255.0 * (1.0 - y) * (1.0 - k)))
+        else:
+            return (37, 99, 235)
+    return (r, g, b)
+
+
+def render_pdf_separation_plate(
+    file_path: str,
+    output_path: str,
+    plate_name: str,
+    display_mode: str = "ink",
+) -> Dict[str, Any]:
+    """
+    Renders an isolated Prepress Separation Plate preview (Spot Color or Process CMYK)
+    from a PDF/AI file or raster artwork file, mimicking Adobe Acrobat Pro Output Preview -> Separations.
+    - `display_mode`: 'ink' (simulated spot/process ink color on white paper) or 'black' (100% solid darkroom CTP plate).
+    """
+    import numpy as np
+
+    plate_clean = plate_name.strip()
+    plate_up = plate_clean.upper()
+    ext = os.path.splitext(file_path)[1].lower()
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Default fallback ink colors by name heuristics
+    default_cmyk = (0.0, 1.0, 1.0, 0.0)
+    if "COKLAT" in plate_up or "BROWN" in plate_up:
+        default_cmyk = (0.68, 0.80, 1.0, 0.58)
+    elif "KUNING" in plate_up or "GOLD" in plate_up or "EMAS" in plate_up:
+        default_cmyk = (0.0, 0.25, 0.95, 0.0)
+    elif "BIRU" in plate_up or "BLUE" in plate_up or "CYAN" in plate_up:
+        default_cmyk = (1.0, 0.25, 0.0, 0.0)
+    elif "HIJAU" in plate_up or "GREEN" in plate_up:
+        default_cmyk = (0.85, 0.0, 0.90, 0.0)
+    elif "PLONG" in plate_up or "CREASE" in plate_up or "LIPAT" in plate_up:
+        default_cmyk = (1.0, 0.0, 0.0, 0.0)
+
+    if ext not in (".pdf", ".ai"):
+        # For raster images (.jpg, .png, .psd), extract the requested CMYK channel
+        with Image.open(file_path) as im:
+            cmyk_im = im.convert("CMYK")
+            arr = np.array(cmyk_im, dtype=np.float32) / 255.0
+            ch_map = {"CYAN": 0, "MAGENTA": 1, "YELLOW": 2, "BLACK": 3}
+            ch_idx = ch_map.get(plate_up, 3)
+            alpha = arr[:, :, ch_idx]
+            ink_rgb = (20, 24, 33) if display_mode == "black" else _cmyk_to_visible_spot_rgb(default_cmyk, plate_clean)
+            out_rgb = np.zeros((arr.shape[0], arr.shape[1], 3), dtype=np.uint8)
+            for c_i in range(3):
+                out_rgb[:, :, c_i] = np.clip(255.0 - alpha * (255.0 - ink_rgb[c_i]), 0, 255).astype(np.uint8)
+            Image.fromarray(out_rgb, mode="RGB").save(output_path, "PNG")
+            cov_pct = round(float(np.mean(alpha > 0.05) * 100.0), 2)
+            hex_col = "#{:02X}{:02X}{:02X}".format(*ink_rgb)
+            return {
+                "plate_name": plate_clean,
+                "coverage_pct": cov_pct,
+                "hex_color": hex_col,
+                "display_mode": display_mode,
+            }
+
+    scale = min(max(150.0 / 72.0, 1.5), 3.0)
+    mat = fitz.Matrix(scale, scale)
+
+    # CASE 1: Process CMYK Plates (Cyan, Magenta, Yellow, Black)
+    if plate_up in ("CYAN", "MAGENTA", "YELLOW", "BLACK"):
+        doc = fitz.open(file_path)
+        for xref in range(1, doc.xref_length()):
+            try:
+                s = doc.xref_object(xref, compressed=False)
+            except Exception:
+                continue
+            if not s or "/Separation" not in s:
+                continue
+            m = re.search(r"/Separation\s*/([^\s/\[\]<>()]+)", s)
+            if not m:
+                continue
+            raw_pdf_token = m.group(1)
+            dec_name = _decode_pdf_name(raw_pdf_token)
+            if dec_name.upper() not in ("CYAN", "MAGENTA", "YELLOW", "BLACK", "ALL", "NONE"):
+                # Zero out Spot Colors so they do not bleed into Process CMYK plates
+                zero_obj = (
+                    f"[ /Separation /{raw_pdf_token} /DeviceCMYK << "
+                    f"/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 0 0 0 0 ] "
+                    f"/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
+                )
+                try:
+                    doc.update_object(xref, zero_obj)
+                except Exception:
+                    pass
+
+        pix_cmyk = doc[0].get_pixmap(matrix=mat, colorspace=fitz.csCMYK, alpha=False)
+        w, h = pix_cmyk.width, pix_cmyk.height
+        cmyk_arr = np.frombuffer(pix_cmyk.samples, dtype=np.uint8).reshape(h, w, 4).astype(np.float32) / 255.0
+        doc.close()
+
+        ch_idx = {"CYAN": 0, "MAGENTA": 1, "YELLOW": 2, "BLACK": 3}[plate_up]
+        alpha = cmyk_arr[:, :, ch_idx]
+        ink_rgb = (20, 24, 33) if display_mode == "black" else _cmyk_to_visible_spot_rgb(default_cmyk, plate_clean)
+    else:
+        # CASE 2: Spot Color / Pantone / Dieline Separation Plate
+        doc_a = fitz.open(file_path)
+        doc_b = fitz.open(file_path)
+        spot_cmyk = default_cmyk
+        matched_xrefs = 0
+
+        for xref in range(1, doc_a.xref_length()):
+            try:
+                s = doc_a.xref_object(xref, compressed=False)
+            except Exception:
+                continue
+            if not s or "/Separation" not in s:
+                continue
+            m = re.search(r"/Separation\s*/([^\s/\[\]<>()]+)", s)
+            if not m:
+                continue
+            raw_pdf_token = m.group(1)
+            dec_name = _decode_pdf_name(raw_pdf_token)
+            if dec_name.upper() in ("ALL", "NONE"):
+                continue
+
+            is_target = dec_name.strip().lower() == plate_clean.lower()
+            if is_target:
+                matched_xrefs += 1
+                # Extract /C1 [ c m y k ] from inline dict or referenced function XRef
+                m_c1 = re.search(r"/C1\s*\[\s*([0-9.\s]+)\]", s)
+                if not m_c1:
+                    m_fn = re.search(r"/DeviceCMYK\s+(\d+)\s+0\s+R", s)
+                    if m_fn:
+                        try:
+                            fn_str = doc_a.xref_object(int(m_fn.group(1)), compressed=False) or ""
+                            m_c1 = re.search(r"/C1\s*\[\s*([0-9.\s]+)\]", fn_str)
+                        except Exception:
+                            pass
+                if m_c1:
+                    vals = [float(x) for x in m_c1.group(1).split() if x.strip()]
+                    if len(vals) == 4:
+                        spot_cmyk = (vals[0], vals[1], vals[2], vals[3])
+
+            zero_obj = (
+                f"[ /Separation /{raw_pdf_token} /DeviceCMYK << "
+                f"/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 0 0 0 0 ] "
+                f"/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
+            )
+            full_obj = (
+                f"[ /Separation /{raw_pdf_token} /DeviceCMYK << "
+                f"/FunctionType 2 /Domain [ 0 1 ] /C0 [ 0 0 0 0 ] /C1 [ 1 1 1 1 ] "
+                f"/N 1 /Range [ 0 1 0 1 0 1 0 1 ] >> ]"
+            )
+            try:
+                doc_a.update_object(xref, zero_obj)
+                doc_b.update_object(xref, full_obj if is_target else zero_obj)
+            except Exception:
+                pass
+
+        if matched_xrefs > 0:
+            pix_a = doc_a[0].get_pixmap(matrix=mat, alpha=False)
+            pix_b = doc_b[0].get_pixmap(matrix=mat, alpha=False)
+            w, h = pix_a.width, pix_a.height
+            arr_a = np.frombuffer(pix_a.samples, dtype=np.uint8).reshape(h, w, 3).astype(np.float32)
+            arr_b = np.frombuffer(pix_b.samples, dtype=np.uint8).reshape(h, w, 3).astype(np.float32)
+            alpha = np.max(np.clip(arr_a - arr_b, 0.0, 255.0), axis=2) / 255.0
+        else:
+            # Fallback for synthetic demo PDFs where Spot Color is simulated in CMYK stream
+            pix_cmyk = doc_a[0].get_pixmap(matrix=mat, colorspace=fitz.csCMYK, alpha=False)
+            w, h = pix_cmyk.width, pix_cmyk.height
+            cmyk_arr = np.frombuffer(pix_cmyk.samples, dtype=np.uint8).reshape(h, w, 4).astype(np.float32) / 255.0
+            if any(k in plate_up for k in ("DIE", "CUT", "PISAU", "POND")):
+                # Magenta + Cyan dieline stroke
+                alpha = np.clip(np.minimum(cmyk_arr[:, :, 0], cmyk_arr[:, :, 1]) * 1.4, 0.0, 1.0)
+                spot_cmyk = (0.95, 0.0, 0.65, 0.0)
+            elif "CREASE" in plate_up or "LIPAT" in plate_up:
+                alpha = np.clip(cmyk_arr[:, :, 0] - cmyk_arr[:, :, 1], 0.0, 1.0)
+                spot_cmyk = (1.0, 0.0, 0.0, 0.0)
+            else:
+                # Red/Gold Pantone accent
+                alpha = np.clip(np.minimum(cmyk_arr[:, :, 1], cmyk_arr[:, :, 2]), 0.0, 1.0)
+                spot_cmyk = (0.0, 0.90, 0.85, 0.0)
+
+        doc_a.close()
+        doc_b.close()
+        ink_rgb = (20, 24, 33) if display_mode == "black" else _cmyk_to_visible_spot_rgb(spot_cmyk, plate_clean)
+
+    out_rgb = np.zeros((alpha.shape[0], alpha.shape[1], 3), dtype=np.uint8)
+    for c_i in range(3):
+        out_rgb[:, :, c_i] = np.clip(255.0 - alpha * (255.0 - ink_rgb[c_i]), 0.0, 255.0).astype(np.uint8)
+
+    Image.fromarray(out_rgb, mode="RGB").save(output_path, "PNG")
+    cov_pct = round(float(np.mean(alpha > 0.05) * 100.0), 2)
+    hex_col = "#{:02X}{:02X}{:02X}".format(*ink_rgb)
+
+    return {
+        "plate_name": plate_clean,
+        "coverage_pct": cov_pct,
+        "hex_color": hex_col,
+        "display_mode": display_mode,
+    }

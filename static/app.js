@@ -9,11 +9,21 @@ const state = {
   activeTab: 'inspector', // 'inspector' | 'comparator' | 'checklist' | 'approval' | 'audit'
   selectedStage: 'AW', // 'ORIGINAL' | 'AW' | 'ONEUP' | 'LAYOUT'
   uploadTargetStage: 'AW',
+  activeSubFileId: {}, // { [stage]: fileId }
   canvasZoom: 1.0,
   showTrimGuide: true,
   pinModeActive: false,
   highlightedPinId: null,
   pendingPinCoords: { x_pct: 50, y_pct: 50, w_pct: 8, h_pct: 8, stage: 'AW' },
+  activeSeparation: {
+    fileId: null,
+    plate: null,
+    mode: 'ink',
+    imageUrl: null,
+    coveragePct: null,
+    hexColor: null,
+    loading: false,
+  },
 
   // Comparator State
   compStageA: 'ORIGINAL',
@@ -421,11 +431,16 @@ function renderWorkspace() {
 function renderInspectorTab(container) {
   const detail = state.jobDetail;
   const stageFiles = detail.stage_files || {};
+  const stageAllFiles = detail.stage_all_files || {};
   const annotations = detail.annotations || [];
 
   const stageBoxesHtml = ['ORIGINAL', 'AW', 'ONEUP', 'LAYOUT']
     .map((st) => {
-      const f = stageFiles[st];
+      const allForStage = stageAllFiles[st] || (stageFiles[st] ? [stageFiles[st]] : []);
+      const f =
+        allForStage.find((item) => item.id === (state.activeSubFileId && state.activeSubFileId[st])) ||
+        stageFiles[st] ||
+        (allForStage.length > 0 ? allForStage[0] : null);
       const isSel = state.selectedStage === st ? 'active' : '';
       const stageAnnotations = annotations.filter((a) => a.stage === st && a.status === 'OPEN');
       if (!f) {
@@ -452,32 +467,74 @@ function renderInspectorTab(container) {
       const cs = (insp.color_spaces || [])
         .map((c) => (c === 'Spot/Separation' ? 'Spot' : c))
         .join(' + ');
+
+      const fileCountBadge =
+        allForStage.length > 1
+          ? `<span class="badge" style="background:#e0e7ff; color:#3730a3; font-size:10.5px; padding:2px 6px;">${allForStage.length} File</span>`
+          : '';
+
+      const fileSelectorHtml =
+        allForStage.length > 1
+          ? `
+            <div style="margin:4px 0;" onclick="event.stopPropagation()">
+              <select class="form-control" style="font-size:11px; padding:2px 6px; height:26px; border-color:var(--border);" onchange="switchActiveSubFile('${st}', this.value)">
+                ${allForStage
+                  .map(
+                    (sub) =>
+                      `<option value="${sub.id}" ${sub.id === f.id ? 'selected' : ''}>${sub.filename} (v${sub.version})</option>`
+                  )
+                  .join('')}
+              </select>
+            </div>
+          `
+          : `
+            <div style="font-size:12px; font-weight:600; color:var(--accent); word-break:break-all;">
+              ${f.filename} <span style="color:var(--text-muted);">(v${f.version})</span>
+            </div>
+          `;
+
+      const uploadBtnLabel =
+        st === 'ONEUP' || allForStage.length > 1
+          ? '&#8682; + Tambah / Revisi'
+          : '&#8682; Upload Revisi';
+
       return `
         <div class="stage-box ${isSel}" onclick="selectStage('${st}')">
           <div class="stage-box-header">
-            <span class="stage-name">${STAGE_META[st].label}</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span class="stage-name">${STAGE_META[st].label}</span>
+              ${fileCountBadge}
+            </div>
             ${statusBadgeHtml(f.auto_status)}
           </div>
-          <div style="font-size:12px; font-weight:600; color:var(--accent); word-break:break-all;">
-            ${f.filename} <span style="color:var(--text-muted);">(v${f.version})</span>
-          </div>
+          ${fileSelectorHtml}
           <div class="stage-meta">
             <div style="display:flex; justify-content:space-between; gap:8px;"><span>Ukuran Trim</span><strong>${tw} &times; ${th} mm</strong></div>
             <div style="display:flex; justify-content:space-between; gap:8px;"><span>Area Bleed</span><strong>${bl} mm</strong></div>
             <div style="display:flex; justify-content:space-between; gap:8px;"><span>Mode Warna</span><strong style="text-align:right; ${insp.has_rgb ? 'color:var(--danger);' : 'color:var(--success);'}">${cs} (${insp.spot_color_count || 0} Spot)</strong></div>
             <div style="display:flex; justify-content:space-between; gap:8px;"><span>DPI &amp; Temuan</span><strong>${insp.min_dpi ?? 'Vector'} DPI &bull; <span style="${stageAnnotations.length > 0 ? 'color:var(--danger);' : 'color:var(--success);'}">${stageAnnotations.length} Pin</span></strong></div>
           </div>
-          <div style="display:flex; gap:6px; margin-top:4px;">
-            <button class="btn btn-sm btn-outline" style="flex:1;" onclick="triggerStageUpload(event, '${st}')">
-              &#8682; Upload Revisi Baru
+          <div style="display:flex; gap:6px; margin-top:6px;">
+            <button class="btn btn-sm btn-outline" style="flex:1;" onclick="triggerStageUpload(event, '${st}')" title="Unggah file baru atau revisi">
+              ${uploadBtnLabel}
             </button>
+            <button class="btn btn-sm btn-outline" style="color:var(--danger); border-color:#fca5a5; background:#fff1f2; padding:0 10px;" onclick="confirmDeleteStageFile(event, ${f.id}, '${st}')" title="Hapus file ini">&#128465; Hapus</button>
           </div>
         </div>
       `;
     })
     .join('');
 
-  const activeFile = stageFiles[state.selectedStage];
+  const allCurrentStageFiles =
+    stageAllFiles[state.selectedStage] ||
+    (stageFiles[state.selectedStage] ? [stageFiles[state.selectedStage]] : []);
+  const activeFile =
+    allCurrentStageFiles.find(
+      (item) => item.id === (state.activeSubFileId && state.activeSubFileId[state.selectedStage])
+    ) ||
+    stageFiles[state.selectedStage] ||
+    (allCurrentStageFiles.length > 0 ? allCurrentStageFiles[0] : null);
+
   const stagePins = annotations.filter((a) => a.stage === state.selectedStage);
 
   let canvasAreaHtml = '';
@@ -529,18 +586,80 @@ function renderInspectorTab(container) {
       })
       .join('');
 
+    const activeSep =
+      state.activeSeparation && state.activeSeparation.fileId === activeFile.id
+        ? state.activeSeparation
+        : { fileId: activeFile.id, plate: null, mode: 'ink', imageUrl: null, coveragePct: null, hexColor: null, loading: false };
+    const isSepActive = Boolean(activeSep.plate && activeSep.imageUrl);
+    const canvasImgSrc = isSepActive
+      ? `${activeSep.imageUrl}?t=${Date.now()}`
+      : `${activeFile.preview_path}?t=${Date.now()}`;
+
+    const cmykPlates = [
+      { name: 'Cyan', color: '#00A8E8' },
+      { name: 'Magenta', color: '#E6007E' },
+      { name: 'Yellow', color: '#D9A406' },
+      { name: 'Black', color: '#18181B' },
+    ];
+    const cmykButtonsHtml = cmykPlates
+      .map((pl) => {
+        const isSel = activeSep.plate && activeSep.plate.toLowerCase() === pl.name.toLowerCase();
+        return `<button
+          type="button"
+          class="badge"
+          style="margin:2px; cursor:pointer; border:1.5px solid ${isSel ? pl.color : 'var(--border)'}; background:${isSel ? pl.color : '#f8fafc'}; color:${isSel ? '#ffffff' : 'var(--text-strong)'}; padding:4px 9px; font-size:11px; font-weight:700; display:inline-flex; align-items:center; gap:5px; border-radius:999px; transition:all 0.15s;"
+          onclick="toggleSeparationPlate(${activeFile.id}, '${pl.name}')"
+          title="Klik untuk melihat pelat separasi proses ${pl.name}"
+        >
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${isSel ? '#fff' : pl.color};"></span>
+          ${pl.name}
+        </button>`;
+      })
+      .join(' ');
+
+    const spotsList =
+      (insp.spot_colors || []).length > 0
+        ? insp.spot_colors
+            .map((s) => {
+              const isSel = activeSep.plate && activeSep.plate.toLowerCase() === String(s).toLowerCase();
+              const activeBg = activeSep.hexColor || '#4f46e5';
+              return `<button
+                type="button"
+                class="badge badge-auto"
+                style="margin:2px; cursor:pointer; border:1.5px solid ${isSel ? activeBg : '#c7d2fe'}; background:${isSel ? activeBg : '#eef2ff'}; color:${isSel ? '#ffffff' : 'var(--accent)'}; padding:4px 10px; font-size:11.5px; font-weight:700; border-radius:999px; transition:all 0.15s; box-shadow:${isSel ? '0 2px 6px rgba(79,70,229,0.28)' : 'none'};"
+                onclick="toggleSeparationPlate(${activeFile.id}, '${escapeAttr(s)}')"
+                title="Klik untuk menampilkan separasi warna '${escapeAttr(s)}' di kanvas"
+              >
+                ${isSel ? '&#10004; ' : '&#128065; '}${escapeHtml(s)}
+              </button>`;
+            })
+            .join(' ')
+        : `<span style="color:var(--text-muted); font-size:11.5px;">Tidak ada Spot Color (Process Only)</span>`;
+
     canvasAreaHtml = `
       <div class="canvas-panel">
         <div class="canvas-toolbar">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <strong style="color:var(--text-strong);">Kanvas Inspeksi: ${STAGE_META[state.selectedStage].short}</strong>
-            <span class="badge badge-info">${activeFile.filename} (v${activeFile.version})</span>
+            ${
+              allCurrentStageFiles.length > 1
+                ? `<select class="form-control" style="font-size:11.5px; padding:2px 8px; height:28px; width:auto; max-width:260px;" onchange="switchActiveSubFile('${state.selectedStage}', this.value)">
+                    ${allCurrentStageFiles
+                      .map(
+                        (sub) =>
+                          `<option value="${sub.id}" ${sub.id === activeFile.id ? 'selected' : ''}>${sub.filename} (v${sub.version})</option>`
+                      )
+                      .join('')}
+                   </select>`
+                : `<span class="badge badge-info">${activeFile.filename} (v${activeFile.version})</span>`
+            }
             <button
               class="btn btn-sm ${state.pinModeActive ? 'btn-danger' : 'btn-outline'}"
               onclick="togglePinMode()"
             >
               ${state.pinModeActive ? '&#10006; Batal Mode Pin (Klik Kanvas Aktif)' : '&#128204; + Tandai Masalah di Kanvas'}
             </button>
+            <button class="btn btn-sm btn-outline" style="color:var(--danger); border-color:#fca5a5; background:#fff1f2;" onclick="confirmDeleteStageFile(event, ${activeFile.id}, '${state.selectedStage}')" title="Hapus file aktif ini">&#128465; Hapus</button>
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
             <label style="font-size:11.5px; display:flex; align-items:center; gap:4px; cursor:pointer; margin-right:6px;">
@@ -551,6 +670,33 @@ function renderInspectorTab(container) {
             <button class="btn btn-sm btn-outline" onclick="resetZoom()">${Math.round(state.canvasZoom * 100)}%</button>
             <button class="btn btn-sm btn-outline" onclick="adjustZoom(0.2)">&#43;</button>
           </div>
+        </div>
+
+        <!-- Always-Visible Interactive Separation Plate Selector Bar -->
+        <div style="background:#f8fafc; border-bottom:1px solid var(--border); padding:6px 14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px;">
+          <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+            <span style="font-size:11.5px; font-weight:700; color:var(--text-strong); margin-right:4px;">&#127912; Klik Pelat Separasi:</span>
+            <button
+              type="button"
+              class="badge"
+              style="margin:2px; cursor:pointer; border:1.5px solid ${!isSepActive ? 'var(--accent)' : 'var(--border)'}; background:${!isSepActive ? 'var(--accent)' : '#ffffff'}; color:${!isSepActive ? '#ffffff' : 'var(--text-strong)'}; padding:4px 10px; font-size:11px; font-weight:700; border-radius:999px;"
+              onclick="clearSeparationPlate()"
+            >
+              ${!isSepActive ? '&#10004; ' : ''}Semua Warna
+            </button>
+            ${(insp.spot_colors || []).length > 0 ? spotsList : ''}
+            <span style="color:var(--border); margin:0 2px;">|</span>
+            ${cmykButtonsHtml}
+          </div>
+          ${
+            isSepActive
+              ? `<div style="display:flex; align-items:center; gap:6px; font-size:11.5px;">
+                  ${activeSep.coveragePct !== null ? `<span class="badge badge-info">Area Tinta: <strong>${activeSep.coveragePct}%</strong></span>` : ''}
+                  <button type="button" class="btn btn-sm ${activeSep.mode !== 'black' ? 'btn-primary' : 'btn-outline'}" style="padding:2px 8px; font-size:11px;" onclick="switchSeparationMode(${activeFile.id}, 'ink')">&#127912; Warna Tinta</button>
+                  <button type="button" class="btn btn-sm ${activeSep.mode === 'black' ? 'btn-primary' : 'btn-outline'}" style="padding:2px 8px; font-size:11px;" onclick="switchSeparationMode(${activeFile.id}, 'black')">&#9899; Film Hitam (CTP)</button>
+                 </div>`
+              : ''
+          }
         </div>
 
         ${
@@ -568,7 +714,7 @@ function renderInspectorTab(container) {
             style="transform: scale(${state.canvasZoom});"
             onclick="onArtworkCanvasClick(event)"
           >
-            <img src="${activeFile.preview_path}?t=${Date.now()}" alt="Preview ${state.selectedStage}" />
+            <img src="${canvasImgSrc}" alt="Preview ${state.selectedStage}" />
             ${
               state.showTrimGuide && bleedMm > 0
                 ? `<div class="trim-guide-overlay" style="left:${insetLeftPct}%; top:${insetTopPct}%; right:${insetLeftPct}%; bottom:${insetTopPct}%;" title="Garis Potong TrimBox (Bleed ${bleedMm}mm)"></div>`
@@ -586,11 +732,6 @@ function renderInspectorTab(container) {
       : insp.all_fonts_safe
       ? `<span style="color:var(--success);">${insp.font_count} Font (100% Embedded)</span>`
       : `<span style="color:var(--danger);">${insp.unembedded_fonts?.length} Font TIDAK Embedded!</span>`;
-
-    const spotsList =
-      (insp.spot_colors || []).length > 0
-        ? insp.spot_colors.map((s) => `<span class="badge badge-auto" style="margin:2px;">${s}</span>`).join(' ')
-        : `<span style="color:var(--text-muted);">Tidak ada Spot Color (Process Only)</span>`;
 
     const pinItemsHtml =
       stagePins.length === 0
@@ -689,9 +830,22 @@ function renderInspectorTab(container) {
               </div>
             </div>
 
-            <div style="margin-top:10px; background:var(--bg-card); border:1px solid var(--border); padding:8px 10px; border-radius:6px;">
-              <div class="param-label">Separasi Spot Color / Pantone / Garis Pisau (${insp.spot_color_count || 0}):</div>
-              <div style="margin-top:4px;">${spotsList}</div>
+            <div style="margin-top:10px; background:var(--bg-card); border:1px solid var(--border); padding:9px 11px; border-radius:6px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;">
+                <div class="param-label">Separasi Spot Color / Pantone / Garis Pisau (${insp.spot_color_count || 0}) &bull; <span style="color:var(--accent); font-weight:700;">Klik Warna untuk Preview Pelat</span>:</div>
+                ${
+                  isSepActive
+                    ? `<button type="button" class="btn btn-sm btn-outline" style="padding:1px 7px; font-size:10.5px;" onclick="clearSeparationPlate()">&#8634; Tampilkan Semua Warna</button>`
+                    : ''
+                }
+              </div>
+              <div style="margin-top:5px; display:flex; flex-wrap:wrap; align-items:center; gap:2px;">
+                ${spotsList}
+              </div>
+              <div style="margin-top:7px; padding-top:6px; border-top:1px dashed var(--border); display:flex; align-items:center; flex-wrap:wrap; gap:3px;">
+                <span style="font-size:11px; color:var(--text-muted); margin-right:4px; font-weight:600;">Pelat Proses CMYK:</span>
+                ${cmykButtonsHtml}
+              </div>
             </div>
 
             <div style="margin-top:8px; background:var(--bg-card); border:1px solid var(--border); padding:8px 10px; border-radius:6px;">
@@ -716,6 +870,74 @@ function renderInspectorTab(container) {
   `;
 }
 
+function escapeHtml(val) {
+  return String(val ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function escapeAttr(val) {
+  return String(val ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '&quot;');
+}
+
+async function toggleSeparationPlate(fileId, plateName) {
+  if (!state.selectedJobId || !fileId || !plateName) return;
+  const cur = state.activeSeparation || {};
+  if (cur.fileId === fileId && cur.plate && cur.plate.toLowerCase() === plateName.toLowerCase()) {
+    clearSeparationPlate();
+    return;
+  }
+  const mode = cur.mode || 'ink';
+  await loadSeparationPlate(fileId, plateName, mode);
+}
+
+async function switchSeparationMode(fileId, newMode) {
+  const cur = state.activeSeparation || {};
+  if (!cur.plate || !fileId) return;
+  await loadSeparationPlate(fileId, cur.plate, newMode);
+}
+
+async function loadSeparationPlate(fileId, plateName, mode = 'ink') {
+  try {
+    showToast(`Merender pelat separasi <strong>${escapeHtml(plateName)}</strong>...`, 'info');
+    const res = await apiFetch(
+      `/api/jobs/${state.selectedJobId}/files/${fileId}/separation?plate=${encodeURIComponent(
+        plateName
+      )}&mode=${encodeURIComponent(mode)}`
+    );
+    state.activeSeparation = {
+      fileId,
+      plate: res.plate_name || plateName,
+      mode: res.display_mode || mode,
+      imageUrl: res.image_url,
+      coveragePct: res.coverage_pct ?? null,
+      hexColor: res.hex_color || '#4f46e5',
+      loading: false,
+    };
+    renderWorkspace();
+  } catch (err) {
+    showToast(`Gagal memuat separasi warna: ${err.message}`, 'error');
+  }
+}
+
+function clearSeparationPlate() {
+  state.activeSeparation = {
+    fileId: null,
+    plate: null,
+    mode: 'ink',
+    imageUrl: null,
+    coveragePct: null,
+    hexColor: null,
+    loading: false,
+  };
+  renderWorkspace();
+}
+
 function selectStage(stage) {
   state.selectedStage = stage;
   state.pinModeActive = false;
@@ -730,25 +952,69 @@ function triggerStageUpload(event, stage) {
   input.click();
 }
 
+function switchActiveSubFile(stage, fileId) {
+  if (!state.activeSubFileId) state.activeSubFileId = {};
+  state.activeSubFileId[stage] = parseInt(fileId, 10);
+  state.selectedStage = stage;
+  renderWorkspace();
+}
+
+async function confirmDeleteStageFile(event, fileId, stage) {
+  if (event) event.stopPropagation();
+  const fileObj = (state.jobDetail?.file_history || []).find((x) => x.id === fileId);
+  const filename = fileObj?.filename || 'file ini';
+  const stageName = STAGE_META[stage]?.label || stage;
+
+  const ok = confirm(
+    `Hapus file "${filename}" dari tahap ${stageName}?\n\nTindakan ini akan menghapus file fisik dari server dan memperbarui evaluasi checklist otomatis.`
+  );
+  if (!ok) return;
+
+  try {
+    showToast(`Menghapus file <strong>${filename}</strong>...`, 'info');
+    await apiFetch(
+      `/api/jobs/${state.selectedJobId}/files/${fileId}?actor_name=${encodeURIComponent(
+        state.activeUser.full_name
+      )}&actor_role=${encodeURIComponent(state.activeUser.role_label)}`,
+      { method: 'DELETE' }
+    );
+    if (state.activeSubFileId && state.activeSubFileId[stage] === fileId) {
+      delete state.activeSubFileId[stage];
+    }
+    showToast(`File <strong>${filename}</strong> berhasil dihapus.`, 'success');
+    await refreshAllData(true);
+  } catch (err) {
+    showToast(`Gagal menghapus file: ${err.message}`, 'error');
+  }
+}
+
 async function handleStageFileSelected(event) {
-  const file = event.target.files?.[0];
-  if (!file || !state.selectedJobId) return;
+  const files = Array.from(event.target.files || []);
+  if (!files.length || !state.selectedJobId) return;
 
   const formData = new FormData();
   formData.append('stage', state.uploadTargetStage);
   formData.append('uploaded_by', state.activeUser.full_name);
   formData.append('uploaded_role', state.activeUser.role_label);
-  formData.append('file', file);
+  for (const f of files) {
+    formData.append('files', f);
+  }
 
+  const fileCountLabel =
+    files.length > 1 ? `${files.length} file` : `<strong>${files[0].name}</strong>`;
   try {
-    showToast(`Mengunggah &amp; membaca parameter otomatis file <strong>${file.name}</strong>...`, 'info');
-    await apiFetch(`/api/jobs/${state.selectedJobId}/upload`, {
+    showToast(`Mengunggah &amp; membaca parameter otomatis ${fileCountLabel}...`, 'info');
+    const res = await apiFetch(`/api/jobs/${state.selectedJobId}/upload`, {
       method: 'POST',
       body: formData,
     });
     state.selectedStage = state.uploadTargetStage;
+    if (res && res.file_id) {
+      if (!state.activeSubFileId) state.activeSubFileId = {};
+      state.activeSubFileId[state.selectedStage] = res.file_id;
+    }
     showToast(
-      `File <strong>${file.name}</strong> berhasil dianalisis! Parameter checklist otomatis telah diperbarui.`,
+      `${fileCountLabel} berhasil dianalisis! Parameter checklist otomatis telah diperbarui.`,
       'success'
     );
     await refreshAllData(true);
@@ -1448,7 +1714,7 @@ function renderChecklistTab(container) {
   const d = currentForm.form_data || {};
 
   const formTabsMeta = [
-    { key: 'AWAL', label: '1. Checklist Awal', sub: 'File Customer / AW' },
+    { key: 'AWAL', label: '1. Checklist Awal', sub: 'File Asli Customer' },
     { key: 'ONEUP', label: '2. Checklist OneUp', sub: 'Master 1-Up' },
     { key: 'AKHIR', label: '3. Checklist Akhir', sub: 'Desain, Diecut, Prepress & Finishing' },
   ];
@@ -1470,12 +1736,45 @@ function renderChecklistTab(container) {
     })
     .join('');
 
+  const previewList =
+    d.preview_images && Array.isArray(d.preview_images) && d.preview_images.length > 0
+      ? d.preview_images
+      : d.preview_image_url
+      ? [{ url: d.preview_image_url, filename: d.nama_file || '' }]
+      : [];
+
+  const previewCountBadge =
+    previewList.length > 1
+      ? `<span class="badge" style="background:#e0e7ff; color:#3730a3; font-size:10.5px; padding:2px 6px; margin-left:6px;">${previewList.length} Item File</span>`
+      : '';
+
   const previewImgBlock =
     d.preview_image_url && d.show_preview_image !== false
+    previewList.length > 0 && d.show_preview_image !== false
       ? `
         <div style="text-align:center; margin:8px 0 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px;">
           <img src="${d.preview_image_url}?t=${Date.now()}" alt="Preview Artwork" style="max-height:240px; max-width:100%; object-fit:contain; border-radius:4px;" />
-          <div style="font-size:11px; color:#64748b; margin-top:4px;">Preview otomatis dari file tahapan (${d.nama_file || ''})</div>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">Preview otomatis dari ${ftype === 'AWAL' ? 'File Asli Customer' : 'file tahapan'} (${d.nama_file || ''})</div>
+        <div style="margin:8px 0 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px;">
+          <div style="display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-items:flex-start;">
+            ${previewList
+              .map(
+                (item, idx) => `
+              <div style="flex:1; min-width:180px; max-width:280px; background:#ffffff; border:1px solid #cbd5e1; border-radius:6px; padding:8px; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,0.05); box-sizing:border-box;">
+                <div style="font-size:11px; font-weight:700; color:#1e293b; margin-bottom:6px; word-break:break-all; border-bottom:1px solid #f1f5f9; padding-bottom:4px;">
+                  Item #${idx + 1}: ${item.filename || 'File Artwork'}
+                </div>
+                <img src="${item.url}?t=${Date.now()}" alt="${item.filename || 'Preview Artwork'}" style="max-height:220px; max-width:100%; object-fit:contain; border-radius:4px; background:#f8fafc;" />
+              </div>
+            `
+              )
+              .join('')}
+          </div>
+          <div style="font-size:11px; color:#64748b; margin-top:8px; text-align:center;">
+            Preview otomatis dari ${previewList.length} file tahapan ${
+          ftype === 'AWAL' ? 'File Asli Customer' : ftype === 'ONEUP' ? 'One-Up' : 'Layout'
+        }
+          </div>
         </div>
       `
       : '';
@@ -1490,12 +1789,15 @@ function renderChecklistTab(container) {
       <tr>
         <td colspan="3" class="of-preview-box">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span style="font-weight:bold;">PREVIEW</span>
+            <div style="display:flex; align-items:center;">
+              <span style="font-weight:bold;">PREVIEW</span>
+              ${previewCountBadge}
+            </div>
             ${
-              d.preview_image_url
+              previewList.length > 0
                 ? `<label style="font-size:11.5px; font-weight:normal; cursor:pointer; color:#1d6ff2;">
                     <input type="checkbox" ${d.show_preview_image !== false ? 'checked' : ''} onchange="onFormCheckChange('show_preview_image', this.checked)">
-                    Tampilkan Gambar Preview Artwork
+                    Tampilkan Gambar Preview File Asli ${previewList.length > 1 ? `(${previewList.length} File)` : ''}
                    </label>`
                 : ''
             }
@@ -1526,12 +1828,15 @@ function renderChecklistTab(container) {
       <tr>
         <td colspan="3" class="of-preview-box">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-            <span style="font-weight:bold;">PREVIEW</span>
+            <div style="display:flex; align-items:center;">
+              <span style="font-weight:bold;">PREVIEW</span>
+              ${previewCountBadge}
+            </div>
             ${
-              d.preview_image_url
+              previewList.length > 0
                 ? `<label style="font-size:11.5px; font-weight:normal; cursor:pointer; color:#1d6ff2;">
                     <input type="checkbox" ${d.show_preview_image !== false ? 'checked' : ''} onchange="onFormCheckChange('show_preview_image', this.checked)">
-                    Tampilkan Gambar Preview One-Up
+                    Tampilkan Gambar Preview One-Up ${previewList.length > 1 ? `(${previewList.length} File)` : ''}
                    </label>`
                 : ''
             }
@@ -2375,18 +2680,18 @@ async function uploadAndScanSpkBlob(fileOrBlob, filename = 'spk_scan.png') {
   }
 }
 
-async function scanSampleSpk() {
+async function scanSampleSpk(sampleType = 'odoo') {
   const resPanel = document.getElementById('spkScanResultPanel');
   if (resPanel) {
     resPanel.style.display = 'block';
     resPanel.innerHTML = `
       <div style="padding:14px; text-align:center; background:#fff; border-radius:10px; border:1px solid var(--border); color:var(--accent); font-weight:600;">
-        &#8987; Memindai contoh screenshot SPK Production Order (WH/MO/05661)...
+        &#8987; Memindai contoh SPK ${sampleType === 'manual' ? 'Manual (No. Job 15638)' : 'Production Order (WH/MO/05661)'}...
       </div>
     `;
   }
   try {
-    const data = await apiFetch('/api/spk/scan-sample', { method: 'POST' });
+    const data = await apiFetch(`/api/spk/scan-sample?sample_type=${encodeURIComponent(sampleType)}`, { method: 'POST' });
     applySpkScanResultToForm(data);
     showToast(
       `Contoh SPK <strong>${data.job_number}</strong> berhasil diekstrak otomatis ke seluruh kolom!`,
